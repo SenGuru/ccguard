@@ -5,6 +5,8 @@ use axum::response::{IntoResponse, Response};
 pub enum AppError {
     Db(sqlx::Error),
     Unauthorized(&'static str),
+    Forbidden(&'static str),
+    BadRequest(&'static str),
 }
 
 impl From<sqlx::Error> for AppError {
@@ -22,6 +24,8 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
             }
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg).into_response(),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
         }
     }
 }
