@@ -16,7 +16,9 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             AppError::Db(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("db error: {e}")).into_response()
+                // Log details server-side; return a generic message (don't leak DB internals).
+                eprintln!("db error: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
             }
         }
     }

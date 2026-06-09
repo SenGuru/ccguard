@@ -3,8 +3,10 @@ use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://ccguard:ccguard@localhost:5432/ccguard".into());
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        eprintln!("WARNING: DATABASE_URL not set — using local dev default");
+        "postgres://ccguard:ccguard@localhost:5432/ccguard".into()
+    });
     let pool = PgPoolOptions::new().connect(&url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 

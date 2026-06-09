@@ -26,6 +26,9 @@ async fn load_allowlist(pool: &PgPool, tenant_id: &str) -> Result<Allowlist, sql
     Ok(allow)
 }
 
+/// Ingest a CcEvent. The server is authoritative on classification: any
+/// `repo.classification`/`repo.confidence` in the request payload is ignored and
+/// recomputed from the tenant's allowlist.
 pub async fn ingest(
     State(pool): State<PgPool>,
     Json(ev): Json<CcEvent>,

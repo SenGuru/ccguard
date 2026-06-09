@@ -39,14 +39,13 @@ pub fn parse_remote_url(url: &str) -> Option<RemoteIdentity> {
     }
     let org = parts[0].to_string();
     let name = parts[parts.len() - 1].to_string();
+    // Strip an optional :port from the host (e.g. "github.com:443") so it matches
+    // allowlist entries like "github.com".
+    let host = host.split(':').next().unwrap_or(host.as_str()).to_ascii_lowercase();
     if host.is_empty() || org.is_empty() || name.is_empty() {
         return None;
     }
-    Some(RemoteIdentity {
-        host: host.to_ascii_lowercase(),
-        org,
-        name,
-    })
+    Some(RemoteIdentity { host, org, name })
 }
 
 #[cfg(test)]
@@ -102,6 +101,14 @@ mod tests {
         assert_eq!(
             parse_remote_url("git@GitHub.com:Acme/Repo.git"),
             Some(id("github.com", "Acme", "Repo"))
+        );
+    }
+
+    #[test]
+    fn strips_port_from_host() {
+        assert_eq!(
+            parse_remote_url("https://github.com:443/acme-corp/billing.git"),
+            Some(id("github.com", "acme-corp", "billing"))
         );
     }
 
