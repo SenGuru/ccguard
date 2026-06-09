@@ -20,9 +20,9 @@ pub async fn summary(
 ) -> Result<Json<Vec<ClassTotals>>, AppError> {
     let rows = sqlx::query(
         "select classification, \
-                coalesce(sum(cost_usd),0)   as cost_usd, \
-                coalesce(sum(tokens_in),0)  as tokens_in, \
-                coalesce(sum(tokens_out),0) as tokens_out, \
+                coalesce(sum(cost_usd),0)::double precision as cost_usd, \
+                coalesce(sum(tokens_in),0)::bigint  as tokens_in, \
+                coalesce(sum(tokens_out),0)::bigint as tokens_out, \
                 count(*)                    as events \
          from events where tenant_id = $1 group by classification \
          order by classification",
