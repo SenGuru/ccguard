@@ -3,6 +3,7 @@ use axum::Json;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 
+use crate::auth::AuthedUser;
 use crate::error::AppError;
 
 #[derive(Serialize)]
@@ -15,9 +16,14 @@ pub struct ClassTotals {
 }
 
 pub async fn summary(
+    user: AuthedUser,
     State(pool): State<PgPool>,
     Path(tenant): Path<String>,
 ) -> Result<Json<Vec<ClassTotals>>, AppError> {
+    if user.tenant_id != tenant {
+        return Err(AppError::Forbidden("cross-tenant access denied"));
+    }
+
     let rows = sqlx::query(
         "select classification, \
                 coalesce(sum(cost_usd),0)::double precision as cost_usd, \
