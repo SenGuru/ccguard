@@ -1,3 +1,4 @@
+mod parse;
 mod paths;
 mod state;
 
