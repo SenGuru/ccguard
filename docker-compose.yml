@@ -1,0 +1,9 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ccguard
+      POSTGRES_PASSWORD: ccguard
+      POSTGRES_DB: ccguard
+    ports:
+      - "5432:5432"
