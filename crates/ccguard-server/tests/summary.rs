@@ -5,8 +5,9 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use ccguard_server::app::app;
+use ccguard_server::tokens::generate_token;
 
-async fn post_event(pool: &PgPool, session: &str, org: &str, cost: f64) {
+async fn post_event(pool: &PgPool, token: &str, session: &str, org: &str, cost: f64) {
     let body = serde_json::json!({
         "tenant_id": "acme",
         "user": { "email": "dev@acme.com" },
@@ -23,6 +24,7 @@ async fn post_event(pool: &PgPool, session: &str, org: &str, cost: f64) {
                 .method("POST")
                 .uri("/v1/events")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -37,10 +39,13 @@ async fn summary_groups_spend_by_classification(pool: PgPool) {
         .execute(&pool).await.unwrap();
     sqlx::query("insert into allowlist_rules (tenant_id, kind, value) values ('acme','host','github.com'),('acme','org','acme-corp')")
         .execute(&pool).await.unwrap();
+    let (token, hash) = generate_token();
+    sqlx::query("insert into api_tokens (tenant_id, token_hash) values ('acme', $1)")
+        .bind(&hash).execute(&pool).await.unwrap();
 
-    post_event(&pool, "s1", "acme-corp", 1.0).await;
-    post_event(&pool, "s2", "acme-corp", 0.5).await;
-    post_event(&pool, "s3", "dev-personal", 0.25).await;
+    post_event(&pool, &token, "s1", "acme-corp", 1.0).await;
+    post_event(&pool, &token, "s2", "acme-corp", 0.5).await;
+    post_event(&pool, &token, "s3", "dev-personal", 0.25).await;
 
     let resp = app(pool.clone())
         .oneshot(

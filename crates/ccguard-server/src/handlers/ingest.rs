@@ -5,6 +5,7 @@ use ccguard_core::classify::{classify, Allowlist};
 use ccguard_core::event::CcEvent;
 use sqlx::{PgPool, Row};
 
+use crate::auth::AuthedTenant;
 use crate::error::AppError;
 
 async fn load_allowlist(pool: &PgPool, tenant_id: &str) -> Result<Allowlist, sqlx::Error> {
@@ -26,14 +27,16 @@ async fn load_allowlist(pool: &PgPool, tenant_id: &str) -> Result<Allowlist, sql
     Ok(allow)
 }
 
-/// Ingest a CcEvent. The server is authoritative on classification: any
-/// `repo.classification`/`repo.confidence` in the request payload is ignored and
-/// recomputed from the tenant's allowlist.
+/// Ingest a CcEvent. The tenant is taken from the authenticated API token, NOT the
+/// request body; any `tenant_id`/`repo.classification`/`repo.confidence` in the
+/// payload is ignored and recomputed. (Extractors that read the body must come last,
+/// so `AuthedTenant` precedes `Json`.)
 pub async fn ingest(
+    AuthedTenant(tenant_id): AuthedTenant,
     State(pool): State<PgPool>,
     Json(ev): Json<CcEvent>,
 ) -> Result<StatusCode, AppError> {
-    let allow = load_allowlist(&pool, &ev.tenant_id).await?;
+    let allow = load_allowlist(&pool, &tenant_id).await?;
     let (class, confidence) = classify(
         ev.repo.host.as_deref(),
         ev.repo.org.as_deref(),
@@ -47,7 +50,7 @@ pub async fn ingest(
          activity_type, tokens_in, tokens_out, cost_usd, model, tool_name, content_ref, source_layer) \
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)",
     )
-    .bind(&ev.tenant_id)
+    .bind(&tenant_id)
     .bind(&ev.user.email)
     .bind(&ev.user.seat_id)
     .bind(&ev.tool)
