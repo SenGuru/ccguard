@@ -112,5 +112,23 @@ pub async fn capture(
         .execute(&pool)
         .await?;
     }
+
+    // Recompute aggregates from ALL stored rows for this session (not just this batch),
+    // so that chunked / idempotently re-posted batches produce correct cumulative totals.
+    sqlx::query(
+        "update captured_sessions s set \
+           event_count = sub.cnt, \
+           first_ts    = sub.min_ts, \
+           last_ts     = sub.max_ts \
+         from (select count(*)::int as cnt, min(ts) as min_ts, max(ts) as max_ts \
+               from captured_events \
+               where tenant_id = $1 and session_id = $2) sub \
+         where s.tenant_id = $1 and s.session_id = $2",
+    )
+    .bind(&tenant_id)
+    .bind(&s.session_id)
+    .execute(&pool)
+    .await?;
+
     Ok(StatusCode::ACCEPTED)
 }

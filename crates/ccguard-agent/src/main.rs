@@ -1,3 +1,4 @@
+mod chunk;
 mod event;
 mod parse;
 mod paths;
@@ -90,21 +91,22 @@ fn main() -> anyhow::Result<()> {
     let mut repos = repo::RepoCache::new();
 
     if args.capture {
-        // Full-capture mode: parse complete transcripts, post CapturedSessions
-        let mut captured = 0usize;
-        let mut skipped = 0usize;
+        // Full-capture mode: parse complete transcripts, chunk by content budget, and post
+        // CapturedSessions. Capture reads the WHOLE file each run (the parser needs all lines
+        // for session metadata/seqs); the per-file seq watermark — advanced only on confirmed
+        // 202s — prevents redundant re-POSTs and silent loss of an unsent tail.
+        let mut captured = 0usize; // files that fully sent (all chunks 202)
+        let mut failed = 0usize; // files with an unsent tail (will retry next run)
         for file in paths::list_transcripts(&claude_dir) {
             let key = file.to_string_lossy().to_string();
-            let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
-                Ok(v) => v,
+            let content = match std::fs::read_to_string(&file) {
+                Ok(c) => c,
                 Err(_) => continue,
             };
-            if chunk.is_empty() {
+            if content.is_empty() {
                 continue;
             }
-            // Derive cwd from the file path (the encoded dir name encodes the project path,
-            // but we let parse_session pick it up from the JSONL lines themselves).
-            let mut session = transcript::parse_session(&chunk, None);
+            let mut session = transcript::parse_session(&content, None);
 
             // Populate identity + repo
             session.user_email = email.clone();
@@ -119,21 +121,66 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|| "unknown".to_string());
             }
 
-            match poster.post_capture(&session) {
-                Ok(202) => captured += 1,
-                Ok(code) => {
-                    eprintln!("  POST capture returned HTTP {code}");
-                    skipped += 1;
-                }
-                Err(e) => {
-                    eprintln!("  POST capture error: {e}");
-                    skipped += 1;
+            // Only send events past the confirmed-sent high-water mark for this file.
+            let wm = st.capture_watermark(&key);
+            let new_events: Vec<_> = session
+                .events
+                .iter()
+                .filter(|e| e.seq > wm)
+                .cloned()
+                .collect();
+            if new_events.is_empty() {
+                continue;
+            }
+            let trimmed = ccguard_core::capture::CapturedSession {
+                events: new_events,
+                ..session.clone()
+            };
+
+            let chunks = chunk::chunk_session(&trimmed, chunk::CHUNK_CONTENT_BUDGET);
+            let mut max_sent = wm;
+            let mut had_error = false;
+            for c in &chunks {
+                let chunk_max = c.events.iter().map(|e| e.seq).max();
+                match poster.post_capture(c) {
+                    Ok(202) => {
+                        if let Some(m) = chunk_max {
+                            if m > max_sent {
+                                max_sent = m;
+                            }
+                        }
+                    }
+                    Ok(code) => {
+                        eprintln!("  POST capture returned HTTP {code} for {key} — stopping this file (will retry)");
+                        had_error = true;
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("  POST capture error for {key}: {e} — stopping this file (will retry)");
+                        had_error = true;
+                        break;
+                    }
                 }
             }
-            st.set(&key, new_off);
+
+            // Persist only the confirmed-sent high-water mark — no silent loss.
+            if max_sent > wm {
+                st.set_capture_watermark(&key, max_sent);
+            }
+            if had_error {
+                failed += 1;
+            } else {
+                captured += 1;
+            }
         }
         st.save(&state_path)?;
-        println!("CCGuard agent: captured {captured} session(s), skipped {skipped}.");
+        if failed > 0 {
+            println!(
+                "CCGuard agent: captured {captured} session(s), {failed} had send errors (will retry)."
+            );
+        } else {
+            println!("CCGuard agent: captured {captured} session(s).");
+        }
     } else {
         // Default mode: token-event metadata only (unchanged from Plans 1–4)
         let mut sent = 0usize;

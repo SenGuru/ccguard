@@ -6,6 +6,23 @@ use tower::ServiceExt;
 use ccguard_server::app::app;
 use ccguard_server::tokens::generate_token;
 
+/// POST a CapturedSession body to /v1/capture with the given ingest token; returns the status.
+async fn post_capture(pool: &PgPool, token: &str, body: String) -> StatusCode {
+    app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
 async fn seed(pool: &PgPool) -> String {
     sqlx::query("insert into tenants (id,name) values ('acme','Acme')")
         .execute(pool)
@@ -95,4 +112,102 @@ async fn capture_requires_token(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn chunked_session_accumulates_events_and_recomputes_count(pool: PgPool) {
+    let token = seed(&pool).await;
+
+    // First chunk: seqs 0-1.
+    let chunk_a = serde_json::json!({
+        "session_id":"chunked","user_email":"dev@acme.com",
+        "repo":{"host":"github.com","org":"acme-corp","name":"r","path":"C:\\w"},
+        "title":"big session","cwd":"C:\\w",
+        "events":[
+          {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"a0"},
+          {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"assistant_text","content":"a1"}
+        ]
+    })
+    .to_string();
+    assert_eq!(
+        post_capture(&pool, &token, chunk_a).await,
+        StatusCode::ACCEPTED
+    );
+
+    // After the first chunk, event_count reflects only the 2 stored rows.
+    let cnt1 = sqlx::query("select event_count from captured_sessions where session_id='chunked'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i32, _>("event_count");
+    assert_eq!(cnt1, 2);
+
+    // Second chunk: SAME session_id, DISJOINT seqs 2-3.
+    let chunk_b = serde_json::json!({
+        "session_id":"chunked","user_email":"dev@acme.com",
+        "repo":{"host":"github.com","org":"acme-corp","name":"r","path":"C:\\w"},
+        "title":"big session","cwd":"C:\\w",
+        "events":[
+          {"seq":2,"ts":"2026-06-10T10:00:02Z","kind":"tool_call","tool_name":"Bash","content":"a2"},
+          {"seq":3,"ts":"2026-06-10T10:00:03Z","kind":"assistant_text","content":"a3"}
+        ]
+    })
+    .to_string();
+    assert_eq!(
+        post_capture(&pool, &token, chunk_b).await,
+        StatusCode::ACCEPTED
+    );
+
+    // event_count must be the CUMULATIVE total (4), not the last batch (2) — proves recompute.
+    let cnt2 = sqlx::query("select event_count from captured_sessions where session_id='chunked'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i32, _>("event_count");
+    assert_eq!(cnt2, 4, "event_count must be cumulative (4), not last-batch (2)");
+
+    // All 4 events stored in seq order (the timeline query orders by seq the same way).
+    let rows = sqlx::query(
+        "select seq from captured_events where tenant_id='acme' and session_id='chunked' order by seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let seqs: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>("seq")).collect();
+    assert_eq!(seqs, vec![0, 1, 2, 3], "all 4 events present in seq order");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn large_body_is_accepted_not_413(pool: PgPool) {
+    let token = seed(&pool).await;
+    // One event with ~3 MB of content — would exceed axum's default 2 MB body limit (413)
+    // before Task 1 raised the /v1/capture limit to 64 MiB.
+    let big = "x".repeat(3_000_000);
+    let body = serde_json::json!({
+        "session_id":"huge","user_email":"dev@acme.com",
+        "repo":{"host":"github.com","org":"acme-corp","name":"r","path":"C:\\w"},
+        "title":"huge session","cwd":"C:\\w",
+        "events":[
+          {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"assistant_text","content": big}
+        ]
+    })
+    .to_string();
+    assert!(body.len() > 2 * 1024 * 1024, "test body must exceed 2 MB");
+
+    let status = post_capture(&pool, &token, body).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "expected 202, got {status}");
+
+    // Retrievable: the row stored, content blob present, event_count == 1.
+    let cnt = sqlx::query("select event_count from captured_sessions where session_id='huge'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i32, _>("event_count");
+    assert_eq!(cnt, 1);
+    let bytes = sqlx::query("select bytes from content_blobs where tenant_id='acme'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get::<i32, _>("bytes");
+    assert_eq!(bytes, 3_000_000);
 }

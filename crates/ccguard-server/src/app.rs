@@ -1,3 +1,4 @@
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use sqlx::PgPool;
@@ -16,7 +17,10 @@ pub fn app(pool: PgPool) -> Router {
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))
         .route("/v1/events", post(ingest::ingest))
-        .route("/v1/capture", post(capture::capture))
+        .route(
+            "/v1/capture",
+            post(capture::capture).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
         .route("/v1/orgs/:tenant/summary", get(summary::summary))
         .route("/v1/orgs/:tenant/sessions", get(timeline::list_sessions))
         .route("/v1/sessions/:session_id/timeline", get(timeline::timeline))
