@@ -1,7 +1,8 @@
 use axum::async_trait;
 use axum::extract::{FromRef, FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::http::{header, StatusCode};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Form;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use chrono::{Duration, Utc};
@@ -10,6 +11,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
+use crate::error::AppError;
 use crate::passwords::verify_password;
 use crate::tokens::{generate_token, hash_token};
 
@@ -336,7 +338,7 @@ pub async fn session_view(
     Path(session_id): Path<String>,
 ) -> Html<String> {
     let meta = sqlx::query(
-        "select user_email, classification, title, repo_org, repo_name \
+        "select user_email, classification, title, repo_org, repo_name, on_hold \
          from captured_sessions where tenant_id = $1 and session_id = $2",
     )
     .bind(&user.tenant_id)
@@ -379,13 +381,14 @@ pub async fn session_view(
         findings_by_seq.entry(seq).or_default().push((rule, severity));
     }
 
-    let (email, class, title, org, name) = match &meta {
+    let (email, class, title, org, name, on_hold) = match &meta {
         Some(m) => (
             m.get::<String, _>("user_email"),
             m.get::<String, _>("classification"),
             m.get::<Option<String>, _>("title").unwrap_or_default(),
             m.get::<Option<String>, _>("repo_org").unwrap_or_default(),
             m.get::<Option<String>, _>("repo_name").unwrap_or_default(),
+            m.get::<bool, _>("on_hold"),
         ),
         None => (
             String::new(),
@@ -393,6 +396,7 @@ pub async fn session_view(
             String::new(),
             String::new(),
             String::new(),
+            false,
         ),
     };
     let header = if title.is_empty() {
@@ -410,13 +414,25 @@ pub async fn session_view(
         "Session",
         html! {
             p { a href="/dashboard" { "← dashboard" } }
-            h1 { (header) }
+            h1 {
+                (header)
+                @if on_hold { " " span.badge.high title="ON LEGAL HOLD" { "🔒 ON LEGAL HOLD" } }
+            }
             p {
                 (email) " · "
                 span.badge.(class) { (class) }
                 @if !repo.is_empty() { " · " (repo) }
                 " · " (events.len()) " events · "
                 code { (session_id) }
+            }
+            p {
+                a href={"/dashboard/sessions/" (session_id) "/export"} { "Export NDJSON" }
+                " · "
+                form method="post" action={"/dashboard/sessions/" (session_id) "/hold"} style="display:inline" {
+                    button type="submit" {
+                        @if on_hold { "Release hold" } @else { "Place legal hold" }
+                    }
+                }
             }
             @for e in &events {
                 @let seq: i64 = e.get("seq");
@@ -451,6 +467,105 @@ pub async fn session_view(
             }
         },
     )
+}
+
+/// eDiscovery export: stream one captured session as newline-delimited JSON
+/// (NDJSON). Line 1 is the session record; each subsequent line is one event in
+/// `seq` order with its verbatim content joined from `content_blobs` (null when
+/// no blob). Tenant-scoped via `WebUser`; a session not owned by this tenant
+/// returns 404 (never another tenant's data). Served as an `attachment` so the
+/// browser downloads `<session_id>.ndjson`.
+pub async fn export(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(session_id): Path<String>,
+) -> Result<Response, AppError> {
+    let meta = sqlx::query(
+        "select session_id, user_email, classification, title, repo_org, repo_name, on_hold \
+         from captured_sessions where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await?;
+
+    let meta = match meta {
+        Some(m) => m,
+        None => return Ok((StatusCode::NOT_FOUND, "session not found").into_response()),
+    };
+
+    let events = sqlx::query(
+        "select e.seq, e.kind, e.tool_name, e.target, b.content, \
+                e.tokens_in, e.tokens_out, e.is_sidechain \
+         from captured_events e \
+         left join content_blobs b \
+           on b.tenant_id = e.tenant_id and b.sha256 = e.content_sha \
+         where e.tenant_id = $1 and e.session_id = $2 \
+         order by e.seq",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut lines: Vec<String> = Vec::with_capacity(events.len() + 1);
+    let session_line = serde_json::json!({
+        "type": "session",
+        "session_id": meta.get::<String, _>("session_id"),
+        "user_email": meta.get::<String, _>("user_email"),
+        "classification": meta.get::<String, _>("classification"),
+        "title": meta.get::<Option<String>, _>("title"),
+        "repo_org": meta.get::<Option<String>, _>("repo_org"),
+        "repo_name": meta.get::<Option<String>, _>("repo_name"),
+        "on_hold": meta.get::<bool, _>("on_hold"),
+    });
+    lines.push(serde_json::to_string(&session_line).unwrap_or_default());
+
+    for e in &events {
+        let event_line = serde_json::json!({
+            "type": "event",
+            "seq": e.get::<i64, _>("seq"),
+            "kind": e.get::<String, _>("kind"),
+            "tool_name": e.get::<Option<String>, _>("tool_name"),
+            "target": e.get::<Option<String>, _>("target"),
+            "content": e.get::<Option<String>, _>("content"),
+            "tokens_in": e.get::<i64, _>("tokens_in"),
+            "tokens_out": e.get::<i64, _>("tokens_out"),
+            "is_sidechain": e.get::<bool, _>("is_sidechain"),
+        });
+        lines.push(serde_json::to_string(&event_line).unwrap_or_default());
+    }
+
+    let body = lines.join("\n");
+    let disposition = format!("attachment; filename=\"{session_id}.ndjson\"");
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// Legal hold toggle: flip `on_hold` for one captured session, then 303-redirect
+/// back to its replay page. Tenant-scoped via `WebUser` — the update only ever
+/// touches a row owned by this tenant.
+pub async fn hold(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(session_id): Path<String>,
+) -> Result<Redirect, AppError> {
+    sqlx::query(
+        "update captured_sessions set on_hold = not on_hold \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .execute(&pool)
+    .await?;
+    Ok(Redirect::to(&format!("/dashboard/sessions/{session_id}")))
 }
 
 #[derive(Deserialize)]

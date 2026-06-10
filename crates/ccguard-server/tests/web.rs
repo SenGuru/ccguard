@@ -389,6 +389,193 @@ async fn findings_page_without_cookie_redirects_to_login(pool: PgPool) {
     assert_eq!(resp.headers().get("location").unwrap(), "/login");
 }
 
+/// eDiscovery NDJSON export: capture a session whose first event carries a
+/// distinctive marker, log in, then GET the per-session export with the cookie.
+/// Assert 200, the attachment `.ndjson` content-disposition, a session record
+/// on line 1, and the marker payload on a later (event) line.
+#[sqlx::test(migrations = "./migrations")]
+async fn export_returns_ndjson_attachment_with_session_and_events(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    let body = serde_json::json!({
+        "session_id": "sess-export",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
+        "title": "Export me",
+        "cwd": "C:\\w",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt",
+             "content": "export_marker_payload"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/sessions/sess-export/export")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(cd.contains("attachment"), "expected attachment disposition");
+    assert!(cd.contains(".ndjson"), "expected .ndjson filename");
+
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let ndjson = String::from_utf8(bytes.to_vec()).unwrap();
+    let mut lines = ndjson.lines();
+    let first = lines.next().unwrap();
+    assert!(
+        first.contains("\"type\":\"session\""),
+        "first line must be the session record, got: {first}"
+    );
+    assert!(
+        ndjson.contains("export_marker_payload"),
+        "event content marker must appear on a later line"
+    );
+}
+
+/// Legal hold toggle: POST the hold endpoint -> 303, on_hold flips to true and
+/// the session view surfaces the hold marker; POST again -> on_hold flips back
+/// to false.
+#[sqlx::test(migrations = "./migrations")]
+async fn hold_toggles_on_hold_and_surfaces_on_session_view(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    let body = serde_json::json!({
+        "session_id": "sess-hold",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
+        "title": "Hold me",
+        "cwd": "C:\\w",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt", "content": "hi"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+
+    // Place the hold.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/dashboard/sessions/sess-hold/hold")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let on_hold: bool =
+        sqlx::query_scalar("select on_hold from captured_sessions where session_id = 'sess-hold'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(on_hold, "on_hold must be true after first toggle");
+
+    // Session view should now surface the hold marker.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/sessions/sess-hold")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("ON LEGAL HOLD") || html.contains("🔒"),
+        "session view must show the legal hold marker"
+    );
+
+    // Toggle again -> back to false.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/dashboard/sessions/sess-hold/hold")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let on_hold: bool =
+        sqlx::query_scalar("select on_hold from captured_sessions where session_id = 'sess-hold'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!on_hold, "on_hold must be false after second toggle");
+}
+
+/// The export endpoint is gated by the WebUser cookie — no cookie -> /login.
+#[sqlx::test(migrations = "./migrations")]
+async fn export_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard/sessions/sess-xyz/export")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}
+
 /// The session-replay page is gated by the WebUser cookie — no cookie -> /login.
 #[sqlx::test(migrations = "./migrations")]
 async fn session_view_without_cookie_redirects_to_login(pool: PgPool) {
