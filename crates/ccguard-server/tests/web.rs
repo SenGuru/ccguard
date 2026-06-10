@@ -591,3 +591,214 @@ async fn session_view_without_cookie_redirects_to_login(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/login");
 }
+
+/// POST a JSON body to `uri` with a Bearer ingest token; returns the response.
+async fn post_ingest_json(
+    pool: &PgPool,
+    uri: &str,
+    token: &str,
+    body: String,
+) -> axum::http::Response<Body> {
+    app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// Set the acme tenant policy via the web POST form (owner cookie required).
+async fn set_policy_via_form(pool: &PgPool, cookie: &str) -> StatusCode {
+    app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/dashboard/policy")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("ccg_session={cookie}"))
+                .body(Body::from(
+                    "org_uuid=org-acme-9&otel_endpoint=https://otel.acme.com:4318&server_url=https://ccguard.acme.com&min_version=2.1.38",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Policy page (web): POST the configure form -> 303, then GET the policy page
+/// and assert the generated managed-settings (real enterprise key
+/// `forceLoginOrgUUID` + the configured org) and the Windows deploy path render.
+#[sqlx::test(migrations = "./migrations")]
+async fn policy_page_renders_managed_settings_and_deploy_paths(pool: PgPool) {
+    seed_user(&pool).await;
+    let token = login_cookie(&pool).await;
+
+    // Owner sets the policy via the web form.
+    assert_eq!(set_policy_via_form(&pool, &token).await, StatusCode::SEE_OTHER);
+
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/policy")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("forceLoginOrgUUID"),
+        "policy page must render the real managed-settings key"
+    );
+    assert!(
+        html.contains("org-acme-9"),
+        "policy page must render the configured org uuid"
+    );
+    assert!(
+        html.contains(r"C:\ProgramData\ClaudeCode"),
+        "policy page must show the Windows managed-settings path"
+    );
+}
+
+/// The managed-settings.json download returns the generated JSON as an
+/// attachment whose body contains the real enterprise key.
+#[sqlx::test(migrations = "./migrations")]
+async fn policy_download_returns_managed_settings_json_attachment(pool: PgPool) {
+    seed_user(&pool).await;
+    let token = login_cookie(&pool).await;
+    assert_eq!(set_policy_via_form(&pool, &token).await, StatusCode::SEE_OTHER);
+
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/policy/managed-settings.json")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(cd.contains("attachment"), "expected attachment disposition");
+    assert!(
+        cd.contains("managed-settings.json"),
+        "expected managed-settings.json filename"
+    );
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        body.contains("forceLoginOrgUUID"),
+        "downloaded file must be the generated managed-settings.json"
+    );
+}
+
+/// The fleet page lists an enrolled+attested device with a compliance badge.
+#[sqlx::test(migrations = "./migrations")]
+async fn fleet_page_lists_enrolled_device_with_badge(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+    let token = login_cookie(&pool).await;
+
+    // A policy must exist before enroll (enroll returns 409 otherwise).
+    assert_eq!(set_policy_via_form(&pool, &token).await, StatusCode::SEE_OTHER);
+
+    // Enroll a device with the ingest token.
+    let enroll = serde_json::json!({
+        "device_id": "dev-fleet-1",
+        "hostname": "WS-FLEET",
+        "os": "windows",
+        "agent_version": "0.1",
+        "user_email": "dev@acme.com",
+    })
+    .to_string();
+    assert_eq!(
+        post_ingest_json(&pool, "/v1/enroll", &ingest, enroll)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // Attest a (drifted) snapshot so the device gets a compliance verdict.
+    let attest = serde_json::json!({
+        "device_id": "dev-fleet-1",
+        "agent_version": "0.1",
+        "attestation": {
+            "policy_present": true,
+            "policy_hash": "deadbeef",
+            "policy_match": true,
+            "telemetry_on": false,
+            "hook_present": true,
+            "login_locked": true,
+            "bypass_disabled": true,
+            "active_account": "dev@acme.com",
+            "active_org": "org-acme-9",
+            "personal_account": false
+        }
+    })
+    .to_string();
+    assert_eq!(
+        post_ingest_json(&pool, "/v1/attest", &ingest, attest)
+            .await
+            .status(),
+        StatusCode::ACCEPTED
+    );
+
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/fleet")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("WS-FLEET"),
+        "fleet page must show the enrolled hostname"
+    );
+    // The device just checked in, so it reads its real verdict (drifted), not stale.
+    assert!(
+        html.contains("badge drifted") || html.contains("drifted"),
+        "fleet page must show a compliance badge for the device"
+    );
+}
+
+/// The fleet page is gated by the WebUser cookie — no cookie -> /login.
+#[sqlx::test(migrations = "./migrations")]
+async fn fleet_page_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard/fleet")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}

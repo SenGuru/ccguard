@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
+use ccguard_core::enforce::{managed_settings_pretty, policy_hash, PolicyConfig};
+
 use crate::error::AppError;
 use crate::passwords::verify_password;
 use crate::tokens::{generate_token, hash_token};
@@ -84,11 +86,25 @@ pub fn page(title: &str, body: Markup) -> Html<String> {
     )
 }
 
+/// Shared top navigation, rendered consistently on every dashboard page.
+pub fn nav() -> Markup {
+    html! {
+        p {
+            a href="/dashboard" { "dashboard" } " · "
+            a href="/dashboard/search" { "search" } " · "
+            a href="/dashboard/findings" { "findings" } " · "
+            a href="/dashboard/fleet" { "fleet" } " · "
+            a href="/dashboard/policy" { "policy" }
+        }
+    }
+}
+
 const CSS: &str = "body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}\
 .wrap{max-width:1100px;margin:0 auto;padding:24px}a{color:#6db3ff}h1{font-size:20px}\
 table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #232733;font-size:13px}\
 .badge{padding:2px 8px;border-radius:10px;font-size:12px}.work{background:#16401f;color:#7fe29a}.personal{background:#402016;color:#e2a07f}.unknown{background:#2a2f3a;color:#9aa4b2}\
 .high{background:#4a1616;color:#e29a9a}.medium{background:#4a3a16;color:#e2c89a}.low{background:#2a2f3a;color:#9aa4b2}\
+.compliant{background:#16401f;color:#7fe29a}.drifted{background:#4a3a16;color:#e2c89a}.stale{background:#2a2f3a;color:#9aa4b2}.tampered{background:#4a1616;color:#e29a9a}.noncompliant_account{background:#4a1616;color:#e29a9a}\
 .finding{font-size:12px;margin:4px 0 0;color:#e2c89a}\
 .ev{border-left:3px solid #2a2f3a;margin:6px 0;padding:6px 12px;border-radius:4px;background:#161922}\
 .k{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}\
@@ -229,10 +245,27 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
         }
     }
 
+    // Fleet KPI: total enrolled devices and how many are non-compliant or stale.
+    let fleet_row = sqlx::query(
+        "select count(*) as total, \
+                count(*) filter (where compliance <> 'compliant' \
+                                   or last_seen < now() - interval '15 minutes' \
+                                   or last_seen is null) as noncompliant \
+         from devices where tenant_id = $1",
+    )
+    .bind(&user.tenant_id)
+    .fetch_one(&pool)
+    .await
+    .ok();
+    let (fleet_total, fleet_noncompliant) = match &fleet_row {
+        Some(r) => (r.get::<i64, _>("total"), r.get::<i64, _>("noncompliant")),
+        None => (0i64, 0i64),
+    };
+
     page(
         "Dashboard",
         html! {
-            p { a href="/dashboard" { "dashboard" } " · " a href="/dashboard/search" { "search" } " · " a href="/dashboard/findings" { "findings" } }
+            (nav())
             h1 { "CCGuard — captured Claude Code activity" }
             div.card style="display:flex;gap:32px;align-items:center" {
                 div style="width:220px" { canvas id="donut" {} }
@@ -249,6 +282,11 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                         span.badge.high { "high " (f_high) } " "
                         span.badge.medium { "medium " (f_medium) } " "
                         span.badge.low { "low " (f_low) }
+                    }
+                    p {
+                        a href="/dashboard/fleet" { "Fleet: " }
+                        b { (fleet_total) } " devices · "
+                        span.badge.tampered { (fleet_noncompliant) " non-compliant" }
                     }
                 }
             }
@@ -600,7 +638,7 @@ pub async fn search(
     page(
         "Search",
         html! {
-            p { a href="/dashboard" { "dashboard" } " · " a href="/dashboard/search" { "search" } " · " a href="/dashboard/findings" { "findings" } }
+            (nav())
             h1 { "Search captured content" }
             form method="get" action="/dashboard/search" {
                 input type="text" name="q" value=(q) placeholder="Search prompts, code, tool output…" style="width:70%";
@@ -632,4 +670,274 @@ pub async fn search(
             }
         },
     )
+}
+
+// ---------------------------------------------------------------------------
+// Fleet compliance page — GET /dashboard/fleet  (WebUser)
+// ---------------------------------------------------------------------------
+
+/// Per-OS managed-settings install path. The same path the deploy scripts write
+/// to and the same precedence note shown on the policy page.
+const MANAGED_SETTINGS_PATHS: &[(&str, &str)] = &[
+    ("Windows", r"C:\ProgramData\ClaudeCode\managed-settings.json"),
+    (
+        "macOS",
+        "/Library/Application Support/ClaudeCode/managed-settings.json",
+    ),
+    ("Linux", "/etc/claude-code/managed-settings.json"),
+];
+
+/// Fleet compliance view: every enrolled device for the tenant with its latest
+/// attestation verdict. Reuses the exact staleness override from `fleet::list`
+/// (`last_seen` null or older than 15 minutes reads `stale`). The compliance
+/// string doubles as the badge CSS class. Cookie-authed + tenant-scoped.
+pub async fn fleet(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let rows = sqlx::query(
+        "select device_id, hostname, os, agent_version, user_email, reasons, last_seen, \
+                case when last_seen is null or last_seen < now() - interval '15 minutes' \
+                     then 'stale' else compliance end as compliance \
+         from devices where tenant_id = $1 \
+         order by last_seen desc nulls last limit 500",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Fleet",
+        html! {
+            (nav())
+            h1 { "Fleet compliance" }
+            p { (rows.len()) " device(s) enrolled" }
+            @if rows.is_empty() {
+                div.card {
+                    p { "No devices enrolled yet — deploy the policy from the " a href="/dashboard/policy" { "Policy page" } "." }
+                }
+            } @else {
+                table {
+                    thead { tr { th{"Host"} th{"User"} th{"OS"} th{"Agent ver"} th{"Last seen"} th{"Compliance"} th{"Reasons"} } }
+                    tbody {
+                        @for r in &rows {
+                            @let device_id: String = r.get("device_id");
+                            @let hostname: Option<String> = r.get("hostname");
+                            @let os: Option<String> = r.get("os");
+                            @let ver: Option<String> = r.get("agent_version");
+                            @let email: Option<String> = r.get("user_email");
+                            @let compliance: String = r.get("compliance");
+                            @let reasons: Option<String> = r.get("reasons");
+                            @let last_seen: Option<chrono::DateTime<chrono::Utc>> = r.get("last_seen");
+                            tr {
+                                td { (hostname.clone().unwrap_or_else(|| device_id.clone())) }
+                                td { (email.clone().unwrap_or_default()) }
+                                td { (os.clone().unwrap_or_default()) }
+                                td { (ver.clone().unwrap_or_default()) }
+                                td { (last_seen.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()).unwrap_or_else(|| "never".into())) }
+                                td { span.badge.(compliance) { (compliance) } }
+                                td { (reasons.clone().unwrap_or_default()) }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Policy generator page — GET/POST /dashboard/policy  (WebUser)
+// ---------------------------------------------------------------------------
+
+/// Load the tenant's `tenant_policy` row as a `PolicyConfig`, if set.
+async fn load_policy(pool: &PgPool, tenant_id: &str) -> Option<PolicyConfig> {
+    let row = sqlx::query(
+        "select server_url, org_uuid, otel_endpoint, min_version, token_env \
+         from tenant_policy where tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    Some(PolicyConfig {
+        server_url: row.get("server_url"),
+        org_uuid: row.get("org_uuid"),
+        otel_endpoint: row.get("otel_endpoint"),
+        min_version: row.get("min_version"),
+        token_env: row.get("token_env"),
+    })
+}
+
+/// Render the per-OS managed-settings deploy block (install paths + precedence).
+fn deploy_block(hash: &str) -> Markup {
+    html! {
+        div.card {
+            h1 style="font-size:16px" { "Deploy" }
+            p { "Write the generated " code { "managed-settings.json" } " to the OS-specific path below. This file is " b { "highest-precedence" } " — a user cannot override it." }
+            table {
+                thead { tr { th{"OS"} th{"Path"} } }
+                tbody {
+                    @for (os, path) in MANAGED_SETTINGS_PATHS {
+                        tr { td { (os) } td { code { (path) } } }
+                    }
+                }
+            }
+            p { "Policy hash: " code { (hash) } }
+            p { a href="/dashboard/policy/managed-settings.json" { "Download managed-settings.json" } }
+        }
+    }
+}
+
+/// Policy page (GET). If a policy is set, render the generated managed-settings
+/// JSON (maud-escaped in a `pre`), the per-OS deploy block, the policy hash, and
+/// a download link. If unset, render the configure form to owner/admin; everyone
+/// else sees an "ask an owner" hint. Cookie-authed + tenant-scoped.
+pub async fn policy_get(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let cfg = load_policy(&pool, &user.tenant_id).await;
+    let can_edit = user.role == "owner" || user.role == "admin";
+
+    page(
+        "Policy",
+        html! {
+            (nav())
+            h1 { "Enforcement policy" }
+            @match &cfg {
+                Some(c) => {
+                    p { "This is the Claude Code enterprise " b { "managed-settings.json" } " CCGuard generates for your org. It forces telemetry on, pins the corp login org, and wires the capture hook to your server." }
+                    div.card {
+                        pre { (managed_settings_pretty(c)) }
+                    }
+                    (deploy_block(&policy_hash(c)))
+                    @if can_edit {
+                        (policy_form(c))
+                    }
+                }
+                None => {
+                    @if can_edit {
+                        p { "No policy configured yet. Set one below to generate the managed-settings.json for your fleet." }
+                        (policy_form(&default_policy()))
+                    } @else {
+                        div.card { p { "No policy configured yet — ask an owner to configure the policy." } }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// Default seed values for the configure form when no policy exists yet.
+fn default_policy() -> PolicyConfig {
+    PolicyConfig {
+        server_url: String::new(),
+        org_uuid: String::new(),
+        otel_endpoint: String::new(),
+        min_version: "2.1.38".to_string(),
+        token_env: "CCGUARD_TOKEN".to_string(),
+    }
+}
+
+/// The owner/admin policy configure form, prefilled from `c`.
+fn policy_form(c: &PolicyConfig) -> Markup {
+    html! {
+        div.card {
+            h1 style="font-size:16px" { "Configure policy" }
+            form method="post" action="/dashboard/policy" {
+                p { "Corp Claude org UUID " br;
+                    input type="text" name="org_uuid" value=(c.org_uuid) placeholder="org-…" style="width:100%"; }
+                p { "OTEL collector endpoint " br;
+                    input type="text" name="otel_endpoint" value=(c.otel_endpoint) placeholder="https://otel.corp:4318" style="width:100%"; }
+                p { "CCGuard server URL " br;
+                    input type="text" name="server_url" value=(c.server_url) placeholder="https://ccguard.corp" style="width:100%"; }
+                p { "Minimum Claude Code version " br;
+                    input type="text" name="min_version" value=(c.min_version) style="width:100%"; }
+                p { "Token env var " br;
+                    input type="text" name="token_env" value=(c.token_env) style="width:100%"; }
+                p { button type="submit" { "Save policy" } }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PolicyForm {
+    pub org_uuid: String,
+    pub otel_endpoint: String,
+    #[serde(default)]
+    pub server_url: String,
+    #[serde(default)]
+    pub min_version: String,
+    #[serde(default)]
+    pub token_env: String,
+}
+
+/// Policy page (POST): upsert the tenant policy. Owner/admin only (else 403).
+/// Empty `min_version`/`token_env` fall back to the documented defaults; an empty
+/// `server_url` falls back to the request's own base. 303-redirect on success.
+pub async fn policy_set(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<PolicyForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let min_version = if f.min_version.trim().is_empty() {
+        "2.1.38".to_string()
+    } else {
+        f.min_version.trim().to_string()
+    };
+    let token_env = if f.token_env.trim().is_empty() {
+        "CCGUARD_TOKEN".to_string()
+    } else {
+        f.token_env.trim().to_string()
+    };
+    let server_url = f.server_url.trim().to_string();
+
+    sqlx::query(
+        "insert into tenant_policy \
+         (tenant_id, server_url, org_uuid, otel_endpoint, min_version, token_env, updated_at) \
+         values ($1,$2,$3,$4,$5,$6, now()) \
+         on conflict (tenant_id) do update set \
+           server_url = excluded.server_url, \
+           org_uuid = excluded.org_uuid, \
+           otel_endpoint = excluded.otel_endpoint, \
+           min_version = excluded.min_version, \
+           token_env = excluded.token_env, \
+           updated_at = now()",
+    )
+    .bind(&user.tenant_id)
+    .bind(&server_url)
+    .bind(&f.org_uuid)
+    .bind(&f.otel_endpoint)
+    .bind(&min_version)
+    .bind(&token_env)
+    .execute(&pool)
+    .await?;
+
+    Ok(Redirect::to("/dashboard/policy").into_response())
+}
+
+/// Download the generated managed-settings.json for the tenant as a JSON
+/// attachment. 404 when no policy is set. Cookie-authed + tenant-scoped.
+pub async fn policy_download(
+    user: WebUser,
+    State(pool): State<PgPool>,
+) -> Result<Response, AppError> {
+    let cfg = match load_policy(&pool, &user.tenant_id).await {
+        Some(c) => c,
+        None => return Ok((StatusCode::NOT_FOUND, "policy not set").into_response()),
+    };
+    let body = managed_settings_pretty(&cfg);
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/json".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"managed-settings.json\"".to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
 }
