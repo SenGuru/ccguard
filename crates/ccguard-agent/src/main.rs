@@ -5,6 +5,7 @@ mod poster;
 mod pricing;
 mod repo;
 mod state;
+mod transcript;
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,7 @@ use crate::state::State;
 
 /// CCGuard endpoint agent — VISIBLE monitoring of this machine's Claude Code usage.
 /// Sends metadata only (model, token counts, repo, timing) — never prompt or code content.
+/// Use --capture to send full session transcripts (prompts, responses, tool calls, file edits).
 #[derive(Parser, Debug)]
 #[command(name = "ccguard-agent")]
 struct Args {
@@ -32,6 +34,10 @@ struct Args {
     /// Override the reported user email (default: read from ~/.claude.json)
     #[arg(long)]
     email: Option<String>,
+    /// Full-capture mode: parse complete transcripts (prompts, responses, tool calls, file edits)
+    /// and post CapturedSessions to /v1/capture instead of token-only events to /v1/events.
+    #[arg(long)]
+    capture: bool,
 }
 
 fn read_since(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
@@ -49,7 +55,8 @@ fn read_since(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
 
 fn read_claude_email(claude_dir: &Path) -> Option<String> {
     let json_path = claude_dir.parent()?.join(".claude.json");
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(json_path).ok()?).ok()?;
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(json_path).ok()?).ok()?;
     v.get("oauthAccount")?
         .get("emailAddress")?
         .as_str()
@@ -70,7 +77,8 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "unknown@local".to_string());
 
     println!(
-        "CCGuard agent — VISIBLE Claude Code usage monitoring (metadata only).\n  server: {}\n  claude dir: {}\n  user: {}",
+        "CCGuard agent — VISIBLE Claude Code usage monitoring{}.\n  server: {}\n  claude dir: {}\n  user: {}",
+        if args.capture { " (full-capture mode)" } else { " (metadata only)" },
         args.server,
         claude_dir.display(),
         email
@@ -79,38 +87,87 @@ fn main() -> anyhow::Result<()> {
     let state_path = claude_dir.join("ccguard-agent-state.json");
     let mut st = State::load(&state_path);
     let poster = Poster::new(&args.server, &args.token);
-
     let mut repos = repo::RepoCache::new();
-    let mut sent = 0usize;
-    let mut skipped = 0usize;
-    for file in paths::list_transcripts(&claude_dir) {
-        let key = file.to_string_lossy().to_string();
-        let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if chunk.is_empty() {
-            continue;
-        }
-        for interaction in parse_transcript(&chunk, None) {
-            match interaction_to_event(&interaction, &email, &mut repos) {
-                Some(ev) => match poster.post(&ev) {
-                    Ok(202) => sent += 1,
-                    Ok(code) => {
-                        eprintln!("  POST returned HTTP {code}");
-                        skipped += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("  POST error: {e}");
-                        skipped += 1;
-                    }
-                },
-                None => skipped += 1,
+
+    if args.capture {
+        // Full-capture mode: parse complete transcripts, post CapturedSessions
+        let mut captured = 0usize;
+        let mut skipped = 0usize;
+        for file in paths::list_transcripts(&claude_dir) {
+            let key = file.to_string_lossy().to_string();
+            let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if chunk.is_empty() {
+                continue;
             }
+            // Derive cwd from the file path (the encoded dir name encodes the project path,
+            // but we let parse_session pick it up from the JSONL lines themselves).
+            let mut session = transcript::parse_session(&chunk, None);
+
+            // Populate identity + repo
+            session.user_email = email.clone();
+            if let Some(cwd) = session.cwd.as_deref() {
+                session.repo = repos.resolve(cwd);
+            }
+            if session.session_id.is_empty() {
+                // Use file stem as fallback session id
+                session.session_id = file
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+            }
+
+            match poster.post_capture(&session) {
+                Ok(202) => captured += 1,
+                Ok(code) => {
+                    eprintln!("  POST capture returned HTTP {code}");
+                    skipped += 1;
+                }
+                Err(e) => {
+                    eprintln!("  POST capture error: {e}");
+                    skipped += 1;
+                }
+            }
+            st.set(&key, new_off);
         }
-        st.set(&key, new_off);
+        st.save(&state_path)?;
+        println!("CCGuard agent: captured {captured} session(s), skipped {skipped}.");
+    } else {
+        // Default mode: token-event metadata only (unchanged from Plans 1–4)
+        let mut sent = 0usize;
+        let mut skipped = 0usize;
+        for file in paths::list_transcripts(&claude_dir) {
+            let key = file.to_string_lossy().to_string();
+            let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if chunk.is_empty() {
+                continue;
+            }
+            for interaction in parse_transcript(&chunk, None) {
+                match interaction_to_event(&interaction, &email, &mut repos) {
+                    Some(ev) => match poster.post(&ev) {
+                        Ok(202) => sent += 1,
+                        Ok(code) => {
+                            eprintln!("  POST returned HTTP {code}");
+                            skipped += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("  POST error: {e}");
+                            skipped += 1;
+                        }
+                    },
+                    None => skipped += 1,
+                }
+            }
+            st.set(&key, new_off);
+        }
+        st.save(&state_path)?;
+        println!("CCGuard agent: sent {sent} event(s), skipped {skipped}.");
     }
-    st.save(&state_path)?;
-    println!("CCGuard agent: sent {sent} event(s), skipped {skipped}.");
+
     Ok(())
 }
