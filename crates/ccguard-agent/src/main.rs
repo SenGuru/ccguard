@@ -1,4 +1,5 @@
 mod chunk;
+mod enforce_paths;
 mod event;
 mod parse;
 mod paths;
@@ -20,15 +21,17 @@ use crate::state::State;
 /// CCGuard endpoint agent — VISIBLE monitoring of this machine's Claude Code usage.
 /// Sends metadata only (model, token counts, repo, timing) — never prompt or code content.
 /// Use --capture to send full session transcripts (prompts, responses, tool calls, file edits).
+/// Use --attest to enroll + report this machine's enforcement posture.
+/// Use gen-policy to print a managed-settings.json policy document (no network).
 #[derive(Parser, Debug)]
 #[command(name = "ccguard-agent")]
 struct Args {
     /// CCGuard server base URL, e.g. http://localhost:8080
     #[arg(long)]
     server: String,
-    /// Ingest token (ccg_...) for this tenant
+    /// Ingest token (ccg_...) for this tenant. Required for all modes except gen-policy.
     #[arg(long)]
-    token: String,
+    token: Option<String>,
     /// Claude config dir (default: ~/.claude)
     #[arg(long)]
     claude_dir: Option<String>,
@@ -39,6 +42,27 @@ struct Args {
     /// and post CapturedSessions to /v1/capture instead of token-only events to /v1/events.
     #[arg(long)]
     capture: bool,
+    /// Attestation mode: enroll this device, fetch the expected policy, evaluate the on-disk
+    /// managed-settings, and POST the attestation to /v1/attest. Takes priority over harvest modes.
+    #[arg(long)]
+    attest: bool,
+    /// Optional positional mode word. Currently only `gen-policy` is recognized — it prints a
+    /// managed-settings.json document to stdout and exits (no network, no token). This lets an
+    /// admin run `ccguard-agent --server <url> gen-policy --org-uuid <u> --otel <url> > managed-settings.json`.
+    #[arg(value_name = "MODE")]
+    mode: Option<String>,
+    /// (gen-policy) Corp Claude org UUID logins are locked to.
+    #[arg(long)]
+    org_uuid: Option<String>,
+    /// (gen-policy) OTLP collector endpoint the OTEL exporters point at.
+    #[arg(long)]
+    otel: Option<String>,
+    /// (gen-policy) Minimum allowed Claude Code version. Default: 2.1.38
+    #[arg(long)]
+    min_version: Option<String>,
+    /// (gen-policy) Env var holding the ingest token the hook passes. Default: CCGUARD_TOKEN
+    #[arg(long)]
+    token_env: Option<String>,
 }
 
 fn read_since(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
@@ -54,27 +78,195 @@ fn read_since(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
     Ok((buf, len))
 }
 
-fn read_claude_email(claude_dir: &Path) -> Option<String> {
-    let json_path = claude_dir.parent()?.join(".claude.json");
-    let v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(json_path).ok()?).ok()?;
-    v.get("oauthAccount")?
-        .get("emailAddress")?
-        .as_str()
-        .map(|s| s.to_string())
+/// Read the active Claude identity from `~/.claude.json`: returns
+/// `(oauthAccount.emailAddress, organization-uuid)`. Either may be `None`.
+///
+/// The org UUID's key name has varied across Claude Code versions, so we probe a
+/// few likely shapes — `oauthAccount.organizationUuid` /
+/// `oauthAccount.organization_uuid`, the nested `oauthAccount.organization.uuid`,
+/// and top-level fallbacks — but NEVER fabricate one: absent → `None`.
+fn read_active_account(claude_dir: &Path) -> (Option<String>, Option<String>) {
+    let Some(parent) = claude_dir.parent() else {
+        return (None, None);
+    };
+    let json_path = parent.join(".claude.json");
+    let Ok(text) = std::fs::read_to_string(json_path) else {
+        return (None, None);
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (None, None);
+    };
+
+    let oauth = v.get("oauthAccount");
+    let email = oauth
+        .and_then(|o| o.get("emailAddress"))
+        .and_then(|e| e.as_str())
+        .map(str::to_string);
+
+    let org = read_org_uuid(&v, oauth);
+    (email, org)
+}
+
+/// Probe several likely org-UUID locations; return the first non-empty string.
+fn read_org_uuid(root: &serde_json::Value, oauth: Option<&serde_json::Value>) -> Option<String> {
+    let as_str = |v: Option<&serde_json::Value>| -> Option<String> {
+        v.and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+
+    // Under oauthAccount: organizationUuid / organization_uuid / organization.uuid.
+    if let Some(o) = oauth {
+        if let Some(s) = as_str(o.get("organizationUuid")) {
+            return Some(s);
+        }
+        if let Some(s) = as_str(o.get("organization_uuid")) {
+            return Some(s);
+        }
+        if let Some(org) = o.get("organization") {
+            if let Some(s) = as_str(org.get("uuid")).or_else(|| as_str(org.get("organizationUuid")))
+            {
+                return Some(s);
+            }
+        }
+    }
+    // Top-level fallbacks.
+    as_str(root.get("organizationUuid")).or_else(|| as_str(root.get("organization_uuid")))
+}
+
+/// Build a tenant `PolicyConfig` from CLI flags and print its managed-settings.json
+/// document to stdout. Pure (no network) — intended for `... gen-policy > managed-settings.json`.
+fn run_gen_policy(args: &Args) -> anyhow::Result<()> {
+    let org_uuid = args
+        .org_uuid
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("gen-policy requires --org-uuid"))?;
+    let otel = args
+        .otel
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("gen-policy requires --otel"))?;
+    let cfg = ccguard_core::enforce::PolicyConfig {
+        server_url: args.server.clone(),
+        org_uuid,
+        otel_endpoint: otel,
+        min_version: args
+            .min_version
+            .clone()
+            .unwrap_or_else(|| "2.1.38".to_string()),
+        token_env: args
+            .token_env
+            .clone()
+            .unwrap_or_else(|| "CCGUARD_TOKEN".to_string()),
+    };
+    println!("{}", ccguard_core::enforce::managed_settings_pretty(&cfg));
+    Ok(())
+}
+
+/// Enroll this device, fetch the expected policy, evaluate the on-disk
+/// managed-settings, and POST the attestation to /v1/attest.
+fn run_attest(args: &Args, claude_dir: &Path, poster: &Poster) -> anyhow::Result<()> {
+    let (email, org) = {
+        let (e, o) = read_active_account(claude_dir);
+        (args.email.clone().or(e), o)
+    };
+
+    let device_id = enforce_paths::device_id();
+    let hostname = enforce_paths::hostname();
+    let os = enforce_paths::os_str();
+
+    let enroll_body = serde_json::json!({
+        "device_id": device_id,
+        "hostname": hostname,
+        "os": os,
+        "agent_version": env!("CARGO_PKG_VERSION"),
+        "user_email": email,
+    });
+
+    let resp = match poster.post_enroll(&enroll_body) {
+        Ok(r) => r,
+        Err(e) => {
+            // Treat "no tenant policy" as a non-fatal informational exit.
+            if e.to_string().contains("tenant policy not set") {
+                println!("server has no policy for this tenant; set it in the dashboard");
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
+    let expected = resp.expected;
+
+    let found = enforce_paths::find_managed_settings();
+    let on_disk = found.as_ref().map(|(_, s)| s.as_str());
+
+    let att = ccguard_core::attest::evaluate(on_disk, &expected, email.as_deref(), org.as_deref());
+
+    let attest_body = serde_json::json!({
+        "device_id": device_id,
+        "agent_version": env!("CARGO_PKG_VERSION"),
+        "attestation": att,
+    });
+    let status = poster.post_attest(&attest_body)?;
+
+    // Human summary.
+    let mark = |b: bool| if b { "✓" } else { "✗" };
+    let (compliance, reasons) = ccguard_core::attest::verdict(&att);
+    match &found {
+        Some((path, _)) => println!("  managed-settings: {}", path.display()),
+        None => println!("  managed-settings: NO managed-settings found"),
+    }
+    println!("  telemetry on:       {}", mark(att.telemetry_on));
+    println!("  ccguard hook:       {}", mark(att.hook_present));
+    println!("  login locked:       {}", mark(att.login_locked));
+    println!("  policy match:       {}", mark(att.policy_match));
+    println!("  bypass disabled:    {}", mark(att.bypass_disabled));
+    println!(
+        "  corp account:       {} {}",
+        mark(!att.personal_account),
+        att.active_account.as_deref().unwrap_or("(unknown)")
+    );
+    if reasons.is_empty() {
+        println!("  verdict: {:?}", compliance);
+    } else {
+        println!("  verdict: {:?} — {}", compliance, reasons.join(", "));
+    }
+    println!("  attest POST -> HTTP {status}");
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let claude_dir = args
         .claude_dir
+        .clone()
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
         .expect("could not determine claude dir");
 
+    // gen-policy is pure (no network, no token) and takes priority over every other mode.
+    match args.mode.as_deref() {
+        Some("gen-policy") => return run_gen_policy(&args),
+        Some(other) => {
+            anyhow::bail!("unknown mode '{other}' (only 'gen-policy' is supported)");
+        }
+        None => {}
+    }
+
+    // All remaining modes require an ingest token.
+    let token = args
+        .token
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--token is required (except for gen-policy)"))?;
+    let poster = Poster::new(&args.server, &token);
+
+    // Attestation mode takes priority over the harvest modes and returns early.
+    if args.attest {
+        return run_attest(&args, &claude_dir, &poster);
+    }
+
     let email = args
         .email
-        .or_else(|| read_claude_email(&claude_dir))
+        .clone()
+        .or_else(|| read_active_account(&claude_dir).0)
         .unwrap_or_else(|| "unknown@local".to_string());
 
     println!(
@@ -87,7 +279,6 @@ fn main() -> anyhow::Result<()> {
 
     let state_path = claude_dir.join("ccguard-agent-state.json");
     let mut st = State::load(&state_path);
-    let poster = Poster::new(&args.server, &args.token);
     let mut repos = repo::RepoCache::new();
 
     if args.capture {
@@ -217,4 +408,60 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gen_policy_core_output_is_valid_json_with_force_login_org() {
+        // Pure: build a sample PolicyConfig and render it via the core generator.
+        let cfg = ccguard_core::enforce::PolicyConfig {
+            server_url: "https://ccguard.corp.example".into(),
+            org_uuid: "org-abc-123".into(),
+            otel_endpoint: "https://otel.corp.example:4318".into(),
+            min_version: "2.1.38".into(),
+            token_env: "CCGUARD_TOKEN".into(),
+        };
+        let out = ccguard_core::enforce::managed_settings_pretty(&cfg);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).expect("gen-policy output is valid JSON");
+        assert_eq!(parsed["forceLoginOrgUUID"], "org-abc-123");
+        assert!(out.contains("forceLoginOrgUUID"));
+    }
+
+    #[test]
+    fn read_active_account_parses_email_and_org() {
+        let dir = std::env::temp_dir().join(format!("ccg_acct_{}", std::process::id()));
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"alice@corp.com","organizationUuid":"org-xyz"}}"#,
+        )
+        .unwrap();
+
+        let (email, org) = read_active_account(&claude_dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(email.as_deref(), Some("alice@corp.com"));
+        assert_eq!(org.as_deref(), Some("org-xyz"));
+    }
+
+    #[test]
+    fn read_active_account_missing_org_is_none_not_fabricated() {
+        let dir = std::env::temp_dir().join(format!("ccg_acct_noorg_{}", std::process::id()));
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"bob@gmail.com"}}"#,
+        )
+        .unwrap();
+
+        let (email, org) = read_active_account(&claude_dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(email.as_deref(), Some("bob@gmail.com"));
+        assert_eq!(org, None);
+    }
 }

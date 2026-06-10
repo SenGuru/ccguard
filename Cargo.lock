@@ -283,9 +283,11 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
