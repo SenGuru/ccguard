@@ -1,5 +1,5 @@
 use axum::async_trait;
-use axum::extract::{FromRef, FromRequestParts, State};
+use axum::extract::{FromRef, FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::Form;
@@ -246,6 +246,108 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                  data:{{labels:['work','personal','unknown'],datasets:[{{data:[{work},{personal},{unknown}],\
                  backgroundColor:['#16a34a','#d97706','#475569']}}]}},\
                  options:{{plugins:{{legend:{{labels:{{color:'#e6e6e6'}}}}}}}}}});"))) }
+        },
+    )
+}
+
+/// Session-replay timeline: the full ordered event record for one captured
+/// session — every prompt, assistant response, thinking block, tool call
+/// (+ args/target), tool result, file edit and PR — each color-coded by kind
+/// with its verbatim content. Cookie-authed via `WebUser` and tenant-scoped.
+///
+/// SQL mirrors `handlers::timeline::timeline` verbatim so the web view and the
+/// JSON API view agree. maud auto-escapes `(c)`/`(kind)` so verbatim prompt and
+/// code content (incl. `<`, `>`, `&`) renders safely as text — no injection.
+pub async fn session_view(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(session_id): Path<String>,
+) -> Html<String> {
+    let meta = sqlx::query(
+        "select user_email, classification, title, repo_org, repo_name \
+         from captured_sessions where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let events = sqlx::query(
+        "select e.seq, e.kind, e.model, e.tool_name, e.target, b.content, \
+                e.tokens_in, e.tokens_out, e.is_sidechain \
+         from captured_events e \
+         left join content_blobs b \
+           on b.tenant_id = e.tenant_id and b.sha256 = e.content_sha \
+         where e.tenant_id = $1 and e.session_id = $2 \
+         order by e.seq",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let (email, class, title, org, name) = match &meta {
+        Some(m) => (
+            m.get::<String, _>("user_email"),
+            m.get::<String, _>("classification"),
+            m.get::<Option<String>, _>("title").unwrap_or_default(),
+            m.get::<Option<String>, _>("repo_org").unwrap_or_default(),
+            m.get::<Option<String>, _>("repo_name").unwrap_or_default(),
+        ),
+        None => (
+            String::new(),
+            "unknown".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+    };
+    let header = if title.is_empty() {
+        session_id.clone()
+    } else {
+        title
+    };
+    let repo = if org.is_empty() && name.is_empty() {
+        String::new()
+    } else {
+        format!("{org}/{name}")
+    };
+
+    page(
+        "Session",
+        html! {
+            p { a href="/dashboard" { "← dashboard" } }
+            h1 { (header) }
+            p {
+                (email) " · "
+                span.badge.(class) { (class) }
+                @if !repo.is_empty() { " · " (repo) }
+                " · " (events.len()) " events · "
+                code { (session_id) }
+            }
+            @for e in &events {
+                @let kind: String = e.get("kind");
+                @let tool: Option<String> = e.get("tool_name");
+                @let target: Option<String> = e.get("target");
+                @let content: Option<String> = e.get("content");
+                @let model: Option<String> = e.get("model");
+                @let tin: i64 = e.get("tokens_in");
+                @let tout: i64 = e.get("tokens_out");
+                @let side: bool = e.get("is_sidechain");
+                div.ev.(kind) {
+                    div.k {
+                        (kind)
+                        @if let Some(t) = &tool { " · " (t) }
+                        @if let Some(tg) = &target { " · " (tg.chars().take(80).collect::<String>()) }
+                        @if let Some(m) = &model { " · " (m) }
+                        @if tin > 0 || tout > 0 { " · " (tin) "/" (tout) " tok" }
+                        @if side { " · subagent" }
+                    }
+                    @if let Some(c) = &content { pre { (c) } }
+                }
+            }
         },
     )
 }
