@@ -5,4 +5,6 @@ pub mod classify;
 pub mod enforce;
 pub mod event;
 pub mod findings;
+pub mod ontask;
 pub mod remote;
+pub mod roles;
