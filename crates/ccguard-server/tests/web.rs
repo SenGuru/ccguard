@@ -64,3 +64,18 @@ async fn bad_login_rerenders_form(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}

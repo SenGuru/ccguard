@@ -169,3 +169,83 @@ pub async fn root(jar: CookieJar) -> Redirect {
         Redirect::to("/login")
     }
 }
+
+/// Dashboard overview: work/personal/unknown donut + counts, total sessions,
+/// total events, and a table of captured sessions linking to per-session detail.
+pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let rows = sqlx::query(
+        "select classification, count(*) as c, coalesce(sum(event_count),0)::bigint as ev \
+         from captured_sessions where tenant_id = $1 group by classification",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let mut work = 0i64;
+    let mut personal = 0i64;
+    let mut unknown = 0i64;
+    let mut events = 0i64;
+    for r in &rows {
+        let c: i64 = r.get("c");
+        let ev: i64 = r.get("ev");
+        events += ev;
+        match r.get::<String, _>("classification").as_str() {
+            "work" => work = c,
+            "personal" => personal = c,
+            _ => unknown = c,
+        }
+    }
+    let sessions = sqlx::query(
+        "select session_id, user_email, classification, repo_org, repo_name, title, event_count, last_ts \
+         from captured_sessions where tenant_id = $1 order by last_ts desc nulls last limit 100",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Dashboard",
+        html! {
+            h1 { "CCGuard — captured Claude Code activity" }
+            div.card style="display:flex;gap:32px;align-items:center" {
+                div style="width:220px" { canvas id="donut" {} }
+                div {
+                    p { "Sessions captured: " b { (work + personal + unknown) } }
+                    p {
+                        span.badge.work { "work " (work) } " "
+                        span.badge.personal { "personal " (personal) } " "
+                        span.badge.unknown { "unknown " (unknown) }
+                    }
+                    p { "Total events: " b { (events) } }
+                }
+            }
+            table {
+                thead { tr { th{"Session"} th{"User"} th{"Repo"} th{"Class"} th{"Events"} } }
+                tbody {
+                    @for s in &sessions {
+                        @let sid: String = s.get("session_id");
+                        @let class: String = s.get("classification");
+                        @let org: Option<String> = s.get("repo_org");
+                        @let name: Option<String> = s.get("repo_name");
+                        @let title: Option<String> = s.get("title");
+                        @let ec: i32 = s.get("event_count");
+                        @let email: String = s.get("user_email");
+                        tr {
+                            td { a href={"/dashboard/sessions/" (sid)} { (title.clone().unwrap_or_else(|| sid.chars().take(8).collect())) } }
+                            td { (email) }
+                            td { (org.clone().unwrap_or_default()) "/" (name.clone().unwrap_or_default()) }
+                            td { span.badge.(class) { (class) } }
+                            td { (ec) }
+                        }
+                    }
+                }
+            }
+            script { (maud::PreEscaped(format!(
+                "new Chart(document.getElementById('donut'),{{type:'doughnut',\
+                 data:{{labels:['work','personal','unknown'],datasets:[{{data:[{work},{personal},{unknown}],\
+                 backgroundColor:['#16a34a','#d97706','#475569']}}]}},\
+                 options:{{plugins:{{legend:{{labels:{{color:'#e6e6e6'}}}}}}}}}});"))) }
+        },
+    )
+}
