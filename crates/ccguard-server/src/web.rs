@@ -75,7 +75,9 @@ pub fn page(title: &str, body: Markup) -> Html<String> {
                 head {
                     meta charset="utf-8";
                     meta name="viewport" content="width=device-width, initial-scale=1";
-                    title { "CCGuard — " (title) }
+                    title { "Claresso — " (title) }
+                    link rel="preconnect" href="https://fonts.googleapis.com";
+                    link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap";
                     script src="https://cdn.jsdelivr.net/npm/chart.js" {}
                     style { (maud::PreEscaped(CSS)) }
                 }
@@ -89,41 +91,55 @@ pub fn page(title: &str, body: Markup) -> Html<String> {
 /// Shared top navigation, rendered consistently on every dashboard page.
 pub fn nav() -> Markup {
     html! {
-        p {
-            a href="/dashboard" { "dashboard" } " · "
-            a href="/dashboard/search" { "search" } " · "
-            a href="/dashboard/findings" { "findings" } " · "
-            a href="/dashboard/fleet" { "fleet" } " · "
-            a href="/dashboard/policy" { "policy" } " · "
-            a href="/dashboard/review" { "review" } " · "
-            a href="/dashboard/roles" { "roles" }
+        div.topnav {
+            a.brand href="/dashboard" { (maud::PreEscaped(LOGO_SVG)) "Claresso" }
+            div.navlinks {
+                a href="/dashboard" { "Dashboard" }
+                a href="/dashboard/search" { "Search" }
+                a href="/dashboard/findings" { "Findings" }
+                a href="/dashboard/fleet" { "Fleet" }
+                a href="/dashboard/policy" { "Policy" }
+                a href="/dashboard/review" { "Review" }
+                a href="/dashboard/roles" { "Roles" }
+            }
         }
     }
 }
 
-const CSS: &str = "body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}\
-.wrap{max-width:1100px;margin:0 auto;padding:24px}a{color:#6db3ff}h1{font-size:20px}\
-table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #232733;font-size:13px}\
-.badge{padding:2px 8px;border-radius:10px;font-size:12px}.work{background:#16401f;color:#7fe29a}.personal{background:#402016;color:#e2a07f}.unknown{background:#2a2f3a;color:#9aa4b2}\
-.high{background:#4a1616;color:#e29a9a}.medium{background:#4a3a16;color:#e2c89a}.low{background:#2a2f3a;color:#9aa4b2}\
-.compliant{background:#16401f;color:#7fe29a}.drifted{background:#4a3a16;color:#e2c89a}.stale{background:#2a2f3a;color:#9aa4b2}.tampered{background:#4a1616;color:#e29a9a}.noncompliant_account{background:#4a1616;color:#e29a9a}\
-.on_task{background:#16401f;color:#7fe29a}.review{background:#4a3a16;color:#e2c89a}.off_task{background:#4a1616;color:#e29a9a}\
-.personal_repo{background:#402016;color:#e2a07f}.non_engineer_coding{background:#3a2a4a;color:#c89ae2}\
-.finding{font-size:12px;margin:4px 0 0;color:#e2c89a}\
-.ev{border-left:3px solid #2a2f3a;margin:6px 0;padding:6px 12px;border-radius:4px;background:#161922}\
-.k{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}\
-.user_prompt{border-color:#6db3ff}.assistant_text{border-color:#7fe29a}.thinking{border-color:#9aa4b2;opacity:.8}.tool_call{border-color:#e2c07f}.tool_result{border-color:#7f9ae2}.file_edit{border-color:#e27fd0}.pr{border-color:#7fe2d0}\
-pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font:12px/1.45 ui-monospace,Consolas,monospace;color:#c7ced9}\
-.card{background:#161922;border:1px solid #232733;border-radius:8px;padding:16px;margin:12px 0}\
-input,button{font:14px inherit;padding:8px 10px;border-radius:6px;border:1px solid #2a2f3a;background:#0f1115;color:#e6e6e6}button{background:#234;cursor:pointer}.err{color:#e27f7f}";
+const LOGO_SVG: &str = "<svg class=\"logo-mk\" viewBox=\"0 0 64 64\" fill=\"none\"><path d=\"M48.38 20.53 A20 20 0 1 0 48.38 43.47\" stroke=\"currentColor\" stroke-width=\"8\" stroke-linecap=\"round\"/></svg>";
+
+const CSS: &str = ":root{--ink:#0b1220;--ink-2:#46506a;--ink-3:#8a93a8;--line:#e7eaf0;--bg:#f7f8fb;--accent:#2f6bff;--accent-ink:#1e47c8;--accent-wash:#eaf0ff}\
+*{box-sizing:border-box}\
+body{font:14px/1.5 Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}\
+.wrap{max-width:1100px;margin:0 auto;padding:14px 28px 64px}\
+h1,h2,h3{font-family:'Space Grotesk',Inter,sans-serif;font-weight:600;letter-spacing:-.02em}h1{font-size:22px;margin:10px 0 16px}h3{font-size:17px}\
+a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline}\
+.topnav{display:flex;align-items:center;gap:30px;padding:6px 0 16px;margin-bottom:16px;border-bottom:1px solid var(--line)}\
+.brand{display:flex;align-items:center;gap:9px;font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--ink);letter-spacing:-.02em;text-decoration:none}\
+.logo-mk{width:21px;height:21px;color:var(--accent);flex:none}\
+.navlinks{display:flex;gap:20px;flex-wrap:wrap}.navlinks a{color:var(--ink-2);font-size:14px;font-weight:500;text-decoration:none}.navlinks a:hover{color:var(--ink);text-decoration:none}\
+table{width:100%;border-collapse:collapse;margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}\
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}thead th{font-family:'Space Grotesk';font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em;font-weight:600}tr:last-child td{border-bottom:0}\
+.badge{padding:3px 9px;border-radius:7px;font-size:12px;font-weight:600}\
+.work,.compliant,.on_task{background:#e6f6ee;color:#067a4e}.personal,.personal_repo{background:#fef3df;color:#a96a00}.unknown,.stale,.low{background:#eef1f6;color:#6b7488}\
+.high,.tampered,.noncompliant_account,.off_task{background:#fde8e8;color:#b42318}.medium,.drifted,.review{background:#fef3df;color:#a96a00}.non_engineer_coding{background:#f1e9fb;color:#7a4fb5}\
+.finding{font-size:12px;margin:4px 0 0;color:#a96a00}\
+.ev{border:1px solid var(--line);border-left:3px solid var(--line);margin:8px 0;padding:10px 14px;border-radius:8px;background:#fff}\
+.k{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}\
+.user_prompt{border-left-color:#2f6bff}.assistant_text{border-left-color:#0e9f6e}.thinking{border-left-color:#9aa4b2}.tool_call,.bash_command{border-left-color:#c98a00}.tool_result{border-left-color:#7f9ae2}.file_edit{border-left-color:#d05fb0}.pr{border-left-color:#0db8a0}\
+pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12px/1.5 'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--ink-2)}\
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;box-shadow:0 1px 2px rgba(16,24,52,.04)}\
+input,select{font:14px Inter;padding:8px 11px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)}\
+button{font:14px Inter;font-weight:550;padding:8px 14px;border-radius:8px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer}button:hover{background:var(--accent-ink)}\
+.err{color:#b42318}";
 
 /// Sign-in form. `err` renders an inline error message when present.
 pub fn login_page(err: Option<&str>) -> Html<String> {
     page(
         "Sign in",
         html! {
-            div.card style="max-width:380px;margin:48px auto" {
-                h1 { "CCGuard" }
+            div.card style="max-width:380px;margin:64px auto" {
+                div.brand style="font-size:22px;margin:2px 0 18px" { (maud::PreEscaped(LOGO_SVG)) "Claresso" }
                 @if let Some(e) = err { p.err { (e) } }
                 form method="post" action="/web/login" {
                     p { input type="text" name="tenant_id" placeholder="Tenant ID (t_…)" style="width:100%"; }
@@ -292,7 +308,7 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
         "Dashboard",
         html! {
             (nav())
-            h1 { "CCGuard — captured Claude Code activity" }
+            h1 { "Claresso — captured Claude Code activity" }
             div.card style="display:flex;gap:32px;align-items:center" {
                 div style="width:220px" { canvas id="donut" {} }
                 div {
@@ -884,7 +900,7 @@ pub async fn policy_get(user: WebUser, State(pool): State<PgPool>) -> Html<Strin
             h1 { "Enforcement policy" }
             @match &cfg {
                 Some(c) => {
-                    p { "This is the Claude Code enterprise " b { "managed-settings.json" } " CCGuard generates for your org. It forces telemetry on, pins the corp login org, and wires the capture hook to your server." }
+                    p { "This is the Claude Code enterprise " b { "managed-settings.json" } " Claresso generates for your org. It forces telemetry on, pins the corp login org, and wires the capture hook to your server." }
                     div.card {
                         pre { (managed_settings_pretty(c)) }
                     }
@@ -927,8 +943,8 @@ fn policy_form(c: &PolicyConfig) -> Markup {
                     input type="text" name="org_uuid" value=(c.org_uuid) placeholder="org-…" style="width:100%"; }
                 p { "OTEL collector endpoint " br;
                     input type="text" name="otel_endpoint" value=(c.otel_endpoint) placeholder="https://otel.corp:4318" style="width:100%"; }
-                p { "CCGuard server URL " br;
-                    input type="text" name="server_url" value=(c.server_url) placeholder="https://ccguard.corp" style="width:100%"; }
+                p { "Claresso server URL " br;
+                    input type="text" name="server_url" value=(c.server_url) placeholder="https://claresso.acme.com" style="width:100%"; }
                 p { "Minimum Claude Code version " br;
                     input type="text" name="min_version" value=(c.min_version) style="width:100%"; }
                 p { "Token env var " br;
