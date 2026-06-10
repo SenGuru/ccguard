@@ -4,3 +4,4 @@ pub mod error;
 pub mod handlers;
 pub mod passwords;
 pub mod tokens;
+pub mod web;

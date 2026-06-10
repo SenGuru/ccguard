@@ -16,6 +16,8 @@ sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
 bcrypt = "0.15"
+maud = "0.26"
+axum-extra = { version = "0.9", features = ["cookie"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
