@@ -83,7 +83,7 @@ static PRIVATE_KEY: Lazy<Regex> = Lazy::new(|| {
 static EMAIL: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap());
 static US_SSN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap());
-static CC_CANDIDATE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(?:\d[ -]?){13,16}\b").unwrap());
+static CC_CANDIDATE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
 
 /// Redact a matched value into a safe preview.
 ///
@@ -120,6 +120,37 @@ fn luhn_valid(digits: &str) -> bool {
         double = !double;
     }
     sum % 10 == 0
+}
+
+/// Whether a digit string is a *real* credit-card number: Luhn-valid, plausible length,
+/// AND carrying a known major-network IIN prefix (Visa / Mastercard / Amex / Discover /
+/// Diners / JCB). The prefix check is what kills the false positives — roughly 1 in 10
+/// random long numbers pass Luhn, but almost none carry a valid card prefix, so a bare
+/// "Luhn + length" rule lights up on timestamps, IDs, and hashes across a real corpus.
+fn looks_like_card(d: &str) -> bool {
+    let n = d.len();
+    if !(13..=19).contains(&n) || !luhn_valid(d) {
+        return false;
+    }
+    let p = |k: usize| d.get(..k).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let (p1, p2, p3, p4) = (p(1), p(2), p(3), p(4));
+    if p1 == 4 {
+        n == 13 || n == 16 || n == 19 // Visa
+    } else if (51..=55).contains(&p2) {
+        n == 16 // Mastercard
+    } else if (2221..=2720).contains(&p4) {
+        n == 16 // Mastercard 2-series
+    } else if p2 == 34 || p2 == 37 {
+        n == 15 // American Express
+    } else if p4 == 6011 || p2 == 65 || (644..=649).contains(&p3) {
+        n == 16 || n == 19 // Discover
+    } else if (3528..=3589).contains(&p4) {
+        (16..=19).contains(&n) // JCB
+    } else if (300..=305).contains(&p3) || p2 == 36 || p2 == 38 || p2 == 39 {
+        n == 14 // Diners Club
+    } else {
+        false
+    }
 }
 
 /// Scan `content` for secrets and PII. Stateless and allocation-light.
@@ -296,7 +327,7 @@ pub fn scan(content: &str) -> Vec<Finding> {
     }
     for m in CC_CANDIDATE.find_iter(content) {
         let digits: String = m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
-        if (13..=16).contains(&digits.len()) && luhn_valid(&digits) {
+        if looks_like_card(&digits) {
             push(
                 &mut findings,
                 &mut spans,
@@ -401,6 +432,20 @@ mod tests {
     fn credit_card_visa_test_number() {
         let fs = scan("4111111111111111");
         assert!(find_rule(&fs, "credit_card").is_some());
+    }
+
+    #[test]
+    fn credit_card_requires_real_iin_prefix() {
+        // A real Amex (37 prefix, 15 digits) is still caught.
+        assert!(find_rule(&scan("amex 378282246310005 here"), "credit_card").is_some());
+        // Luhn-VALID but with a non-card leading digit (7) -> rejected. This is the
+        // false-positive class that lit up across a real corpus (timestamps/ids/hashes).
+        assert!(luhn_valid("7000000000000005"));
+        assert!(find_rule(&scan("snowflake 7000000000000005"), "credit_card").is_none());
+        // Direct helper checks.
+        assert!(looks_like_card("4242424242424242")); // Visa
+        assert!(looks_like_card("378282246310005")); // Amex
+        assert!(!looks_like_card("7000000000000005")); // Luhn-valid non-card
     }
 
     #[test]
