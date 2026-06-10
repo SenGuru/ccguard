@@ -60,7 +60,7 @@ mod tests {
         assert_eq!(ev.user.email, "dev@acme.com");
         assert_eq!(ev.activity.tokens_in, 1_000_000);
         assert_eq!(ev.activity.model.as_deref(), Some("claude-opus-4-8"));
-        assert!((ev.activity.cost_usd - 15.0).abs() < 1e-9); // 1M opus input @ $15
+        assert!((ev.activity.cost_usd - 5.0).abs() < 1e-9); // 1M opus input @ $5
     }
 
     #[test]
