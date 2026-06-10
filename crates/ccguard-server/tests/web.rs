@@ -258,6 +258,121 @@ async fn findings_page_lists_detected_secret_for_logged_in_user(pool: PgPool) {
     );
 }
 
+/// Capture a session whose event content contains a distinctive marker token,
+/// then full-text-search for it on the dashboard search page and assert the hit
+/// (session link / snippet) renders. Also assert a no-match query says
+/// "no results", an absent `q` just shows the form, and no cookie -> /login.
+///
+/// Marker is plain alphabetic (`zphybvqxmarkerterm`) so it survives english FTS
+/// lexing as a single lexeme; `websearch_to_tsquery` matches it exactly.
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_search_finds_captured_content(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    let body = serde_json::json!({
+        "session_id": "sess-search",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
+        "title": "Searchable",
+        "cwd": "C:\\w",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt",
+             "content": "please refactor the zphybvqxmarkerterm helper in billing"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+
+    // Matching query: 200 + the session link to the captured session.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/search?q=zphybvqxmarkerterm")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("/dashboard/sessions/sess-search"),
+        "search results must link to the matching session"
+    );
+    assert!(
+        html.contains("zphybvqxmarkerterm"),
+        "search results must surface the marker in the snippet"
+    );
+
+    // No-match query: 200 + "no results".
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/search?q=nonexistentxyzzy")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("no results"),
+        "a non-matching query must say 'no results'"
+    );
+
+    // No query at all: 200, just the form.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/search")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// The search page is gated by the WebUser cookie — no cookie -> /login.
+#[sqlx::test(migrations = "./migrations")]
+async fn search_page_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard/search")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}
+
 /// The findings page is gated by the WebUser cookie — no cookie -> /login.
 #[sqlx::test(migrations = "./migrations")]
 async fn findings_page_without_cookie_redirects_to_login(pool: PgPool) {

@@ -1,5 +1,5 @@
 use axum::async_trait;
-use axum::extract::{FromRef, FromRequestParts, Path, State};
+use axum::extract::{FromRef, FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::Form;
@@ -230,6 +230,7 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
     page(
         "Dashboard",
         html! {
+            p { a href="/dashboard" { "dashboard" } " · " a href="/dashboard/search" { "search" } " · " a href="/dashboard/findings" { "findings" } }
             h1 { "CCGuard — captured Claude Code activity" }
             div.card style="display:flex;gap:32px;align-items:center" {
                 div style="width:220px" { canvas id="donut" {} }
@@ -446,6 +447,72 @@ pub async fn session_view(
                         }
                     }
                     @if let Some(c) = &content { pre { (c) } }
+                }
+            }
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct SearchParams {
+    pub q: Option<String>,
+}
+
+/// Full-text search page over captured content. GET form prefilled with the
+/// current query; on a non-blank `q` it runs the same tenant-scoped query as the
+/// JSON API (`handlers::search::run_search`) and renders the matching events.
+///
+/// The snippet from `ts_headline` is PLAIN TEXT with `«match»` markers — it is
+/// rendered maud-escaped via `(hit.snippet)` (NOT `PreEscaped`), so any `<`,
+/// `>`, `&` in captured content is escaped: XSS-safe. Cookie-authed via
+/// `WebUser` and tenant-scoped.
+pub async fn search(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Query(params): Query<SearchParams>,
+) -> Html<String> {
+    let q = params.q.unwrap_or_default();
+    let trimmed = q.trim();
+    let hits = if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        crate::handlers::search::run_search(&pool, &user.tenant_id, &q)
+            .await
+            .unwrap_or_default()
+    };
+    let has_query = !trimmed.is_empty();
+
+    page(
+        "Search",
+        html! {
+            p { a href="/dashboard" { "dashboard" } " · " a href="/dashboard/search" { "search" } " · " a href="/dashboard/findings" { "findings" } }
+            h1 { "Search captured content" }
+            form method="get" action="/dashboard/search" {
+                input type="text" name="q" value=(q) placeholder="Search prompts, code, tool output…" style="width:70%";
+                " " button type="submit" { "Search" }
+            }
+            @if has_query {
+                p { (hits.len()) " result(s)" }
+                @if hits.is_empty() {
+                    p { "no results" }
+                } @else {
+                    @for hit in &hits {
+                        div.ev.(hit.kind) {
+                            div.k {
+                                a href={"/dashboard/sessions/" (hit.session_id)} {
+                                    (hit.title.clone().unwrap_or_else(|| hit.session_id.chars().take(8).collect()))
+                                }
+                                " · " (hit.kind)
+                                @let repo = format!(
+                                    "{}/{}",
+                                    hit.repo_org.clone().unwrap_or_default(),
+                                    hit.repo_name.clone().unwrap_or_default()
+                                );
+                                @if repo != "/" { " · " (repo) }
+                            }
+                            pre { (hit.snippet) }
+                        }
+                    }
                 }
             }
         },

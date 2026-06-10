@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod findings;
 pub mod ingest;
+pub mod search;
 pub mod sessions;
 pub mod summary;
 pub mod tenants;
