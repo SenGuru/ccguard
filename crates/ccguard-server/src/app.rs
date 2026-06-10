@@ -4,7 +4,7 @@ use axum::Router;
 use sqlx::PgPool;
 
 use crate::handlers::{
-    capture, findings, fleet, ingest, search, sessions, summary, tenants, timeline, users,
+    capture, findings, fleet, ingest, ontask, search, sessions, summary, tenants, timeline, users,
 };
 use crate::web;
 
@@ -45,5 +45,19 @@ pub fn app(pool: PgPool) -> Router {
         .route("/v1/orgs/:tenant/findings", get(findings::list))
         .route("/v1/orgs/:tenant/search", get(search::search))
         .route("/v1/sessions/:session_id/timeline", get(timeline::timeline))
+        .route(
+            "/v1/orgs/:tenant/repo-overrides",
+            post(ontask::set_repo_override),
+        )
+        .route("/v1/orgs/:tenant/roles", post(ontask::set_role))
+        .route(
+            "/v1/orgs/:tenant/indicators",
+            get(ontask::list_indicators),
+        )
+        .route(
+            "/v1/indicators/:id/status",
+            post(ontask::set_indicator_status),
+        )
+        .route("/v1/orgs/:tenant/ontask", get(ontask::rollup))
         .with_state(pool)
 }

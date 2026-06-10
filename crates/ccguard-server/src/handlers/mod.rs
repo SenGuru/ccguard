@@ -2,6 +2,7 @@ pub mod capture;
 pub mod findings;
 pub mod fleet;
 pub mod ingest;
+pub mod ontask;
 pub mod search;
 pub mod sessions;
 pub mod summary;
