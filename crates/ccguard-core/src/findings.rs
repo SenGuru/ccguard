@@ -32,12 +32,33 @@ pub enum FindingKind {
     Pii,
 }
 
+impl FindingKind {
+    /// Stable lowercase string for storage/binding. Matches the serde repr.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FindingKind::Secret => "secret",
+            FindingKind::Pii => "pii",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     High,
     Medium,
     Low,
+}
+
+impl Severity {
+    /// Stable lowercase string for storage/binding. Matches the serde repr.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Severity::High => "high",
+            Severity::Medium => "medium",
+            Severity::Low => "low",
+        }
+    }
 }
 
 // --- Compiled patterns (compiled once, lazily) ---------------------------------
@@ -426,6 +447,15 @@ mod tests {
         assert!(!luhn_valid("1234567890123456"));
         assert!(!luhn_valid(""));
         assert!(!luhn_valid("not-digits"));
+    }
+
+    #[test]
+    fn enum_as_str_matches_serde_repr() {
+        assert_eq!(FindingKind::Secret.as_str(), "secret");
+        assert_eq!(FindingKind::Pii.as_str(), "pii");
+        assert_eq!(Severity::High.as_str(), "high");
+        assert_eq!(Severity::Medium.as_str(), "medium");
+        assert_eq!(Severity::Low.as_str(), "low");
     }
 
     #[test]

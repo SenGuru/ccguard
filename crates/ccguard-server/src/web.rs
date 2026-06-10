@@ -6,6 +6,7 @@ use axum::Form;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use chrono::{Duration, Utc};
 use maud::{html, Markup, DOCTYPE};
+use std::collections::HashMap;
 use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
@@ -85,6 +86,8 @@ const CSS: &str = "body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;m
 .wrap{max-width:1100px;margin:0 auto;padding:24px}a{color:#6db3ff}h1{font-size:20px}\
 table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #232733;font-size:13px}\
 .badge{padding:2px 8px;border-radius:10px;font-size:12px}.work{background:#16401f;color:#7fe29a}.personal{background:#402016;color:#e2a07f}.unknown{background:#2a2f3a;color:#9aa4b2}\
+.high{background:#4a1616;color:#e29a9a}.medium{background:#4a3a16;color:#e2c89a}.low{background:#2a2f3a;color:#9aa4b2}\
+.finding{font-size:12px;margin:4px 0 0;color:#e2c89a}\
 .ev{border-left:3px solid #2a2f3a;margin:6px 0;padding:6px 12px;border-radius:4px;background:#161922}\
 .k{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}\
 .user_prompt{border-color:#6db3ff}.assistant_text{border-color:#7fe29a}.thinking{border-color:#9aa4b2;opacity:.8}.tool_call{border-color:#e2c07f}.tool_result{border-color:#7f9ae2}.file_edit{border-color:#e27fd0}.pr{border-color:#7fe2d0}\
@@ -204,6 +207,26 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
     .await
     .unwrap_or_default();
 
+    // Findings counts by severity for the KPI line.
+    let frows = sqlx::query(
+        "select severity, count(*) as c from findings where tenant_id = $1 group by severity",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let mut f_high = 0i64;
+    let mut f_medium = 0i64;
+    let mut f_low = 0i64;
+    for r in &frows {
+        let c: i64 = r.get("c");
+        match r.get::<String, _>("severity").as_str() {
+            "high" => f_high = c,
+            "medium" => f_medium = c,
+            _ => f_low = c,
+        }
+    }
+
     page(
         "Dashboard",
         html! {
@@ -218,6 +241,12 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                         span.badge.unknown { "unknown " (unknown) }
                     }
                     p { "Total events: " b { (events) } }
+                    p {
+                        a href="/dashboard/findings" { "Findings: " }
+                        span.badge.high { "high " (f_high) } " "
+                        span.badge.medium { "medium " (f_medium) } " "
+                        span.badge.low { "low " (f_low) }
+                    }
                 }
             }
             table {
@@ -246,6 +275,48 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                  data:{{labels:['work','personal','unknown'],datasets:[{{data:[{work},{personal},{unknown}],\
                  backgroundColor:['#16a34a','#d97706','#475569']}}]}},\
                  options:{{plugins:{{legend:{{labels:{{color:'#e6e6e6'}}}}}}}}}});"))) }
+        },
+    )
+}
+
+/// Findings list: every secret / PII detection for the tenant, newest first
+/// (limit 200). Only a redacted preview is ever stored or shown. Each row links
+/// back to its originating session replay. Cookie-authed via `WebUser`.
+pub async fn findings(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let rows = sqlx::query(
+        "select session_id, seq, kind, rule, severity, redacted, created_at \
+         from findings where tenant_id = $1 order by created_at desc, id desc limit 200",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Findings",
+        html! {
+            p { a href="/dashboard" { "← dashboard" } }
+            h1 { "Findings — secrets & PII" }
+            p { (rows.len()) " finding(s) (most recent 200)" }
+            table {
+                thead { tr { th{"Severity"} th{"Rule"} th{"Kind"} th{"Redacted"} th{"Session"} } }
+                tbody {
+                    @for r in &rows {
+                        @let sid: String = r.get("session_id");
+                        @let rule: String = r.get("rule");
+                        @let kind: String = r.get("kind");
+                        @let sev: String = r.get("severity");
+                        @let red: String = r.get("redacted");
+                        tr {
+                            td { span.badge.(sev) { (sev) } }
+                            td { (rule) }
+                            td { (kind) }
+                            td { code { (red) } }
+                            td { a href={"/dashboard/sessions/" (sid)} { (sid.chars().take(8).collect::<String>()) } }
+                        }
+                    }
+                }
+            }
         },
     )
 }
@@ -288,6 +359,25 @@ pub async fn session_view(
     .await
     .unwrap_or_default();
 
+    // Findings for this session, grouped by event seq so each event card can
+    // render an inline marker line for any secret / PII detected in its content.
+    let frows = sqlx::query(
+        "select seq, rule, severity from findings \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let mut findings_by_seq: HashMap<i64, Vec<(String, String)>> = HashMap::new();
+    for r in &frows {
+        let seq: i64 = r.get("seq");
+        let rule: String = r.get("rule");
+        let severity: String = r.get("severity");
+        findings_by_seq.entry(seq).or_default().push((rule, severity));
+    }
+
     let (email, class, title, org, name) = match &meta {
         Some(m) => (
             m.get::<String, _>("user_email"),
@@ -328,6 +418,7 @@ pub async fn session_view(
                 code { (session_id) }
             }
             @for e in &events {
+                @let seq: i64 = e.get("seq");
                 @let kind: String = e.get("kind");
                 @let tool: Option<String> = e.get("tool_name");
                 @let target: Option<String> = e.get("target");
@@ -344,6 +435,15 @@ pub async fn session_view(
                         @if let Some(m) = &model { " · " (m) }
                         @if tin > 0 || tout > 0 { " · " (tin) "/" (tout) " tok" }
                         @if side { " · subagent" }
+                    }
+                    @if let Some(fs) = findings_by_seq.get(&seq) {
+                        @for (rule, severity) in fs {
+                            div.finding {
+                                "⚠ " (rule) " ("
+                                span.badge.(severity) { (severity) }
+                                ")"
+                            }
+                        }
                     }
                     @if let Some(c) = &content { pre { (c) } }
                 }

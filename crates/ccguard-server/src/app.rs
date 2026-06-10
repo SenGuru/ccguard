@@ -3,7 +3,9 @@ use axum::routing::{get, post};
 use axum::Router;
 use sqlx::PgPool;
 
-use crate::handlers::{capture, ingest, sessions, summary, tenants, timeline, users};
+use crate::handlers::{
+    capture, findings, ingest, sessions, summary, tenants, timeline, users,
+};
 use crate::web;
 
 pub fn app(pool: PgPool) -> Router {
@@ -13,6 +15,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/web/login", post(web::login_post))
         .route("/dashboard", get(web::dashboard))
         .route("/dashboard/sessions/:session_id", get(web::session_view))
+        .route("/dashboard/findings", get(web::findings))
         .route("/v1/tenants", post(tenants::create_tenant))
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))
@@ -23,6 +26,7 @@ pub fn app(pool: PgPool) -> Router {
         )
         .route("/v1/orgs/:tenant/summary", get(summary::summary))
         .route("/v1/orgs/:tenant/sessions", get(timeline::list_sessions))
+        .route("/v1/orgs/:tenant/findings", get(findings::list))
         .route("/v1/sessions/:session_id/timeline", get(timeline::timeline))
         .with_state(pool)
 }

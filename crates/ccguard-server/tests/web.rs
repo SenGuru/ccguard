@@ -197,6 +197,83 @@ async fn session_view_renders_verbatim_content_for_logged_in_user(pool: PgPool) 
     assert!(html.contains("Bash"), "tool name missing from page");
 }
 
+/// Capture a session containing a secret via /v1/capture, log in, then GET
+/// /dashboard/findings with the cookie and assert the findings table surfaces
+/// the detected rule.
+#[sqlx::test(migrations = "./migrations")]
+async fn findings_page_lists_detected_secret_for_logged_in_user(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    let body = serde_json::json!({
+        "session_id": "sess-leak",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
+        "title": "Leaky",
+        "cwd": "C:\\w",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt",
+             "content": "deploy with AKIAIOSFODNN7EXAMPLE now"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/findings")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        html.contains("aws_access_key"),
+        "findings page must list the detected aws_access_key rule"
+    );
+    // The raw secret must never render on the findings page.
+    assert!(
+        !html.contains("AKIAIOSFODNN7EXAMPLE"),
+        "raw secret must not appear on the findings page"
+    );
+}
+
+/// The findings page is gated by the WebUser cookie — no cookie -> /login.
+#[sqlx::test(migrations = "./migrations")]
+async fn findings_page_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard/findings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}
+
 /// The session-replay page is gated by the WebUser cookie — no cookie -> /login.
 #[sqlx::test(migrations = "./migrations")]
 async fn session_view_without_cookie_redirects_to_login(pool: PgPool) {

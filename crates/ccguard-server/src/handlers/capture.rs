@@ -86,6 +86,27 @@ pub async fn capture(
                 .bind(c.len() as i32)
                 .execute(&pool)
                 .await?;
+
+                // Scan this event's content for secrets / PII and store each
+                // finding idempotently (only a redacted preview is persisted).
+                for f in ccguard_core::findings::scan(c) {
+                    sqlx::query(
+                        "insert into findings \
+                         (tenant_id, session_id, seq, kind, rule, severity, redacted) \
+                         values ($1,$2,$3,$4,$5,$6,$7) \
+                         on conflict (tenant_id, session_id, seq, rule, redacted) do nothing",
+                    )
+                    .bind(&tenant_id)
+                    .bind(&s.session_id)
+                    .bind(e.seq)
+                    .bind(f.kind.as_str())
+                    .bind(&f.rule)
+                    .bind(f.severity.as_str())
+                    .bind(&f.redacted)
+                    .execute(&pool)
+                    .await?;
+                }
+
                 Some(sha)
             }
             None => None,

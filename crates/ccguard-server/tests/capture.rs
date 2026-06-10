@@ -178,6 +178,63 @@ async fn chunked_session_accumulates_events_and_recomputes_count(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn capture_scans_and_stores_findings_redacted(pool: PgPool) {
+    let token = seed(&pool).await;
+    // Event content carries an AWS access key (secret/high) and an email (pii/medium).
+    let body = serde_json::json!({
+        "session_id":"leaky","user_email":"dev@acme.com",
+        "repo":{"host":"github.com","org":"acme-corp","name":"r","path":"C:\\w"},
+        "title":"leak","cwd":"C:\\w",
+        "events":[
+          {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt",
+           "content":"key AKIAIOSFODNN7EXAMPLE and contact leak@corp.com please"}
+        ]
+    })
+    .to_string();
+    assert_eq!(
+        post_capture(&pool, &token, body).await,
+        StatusCode::ACCEPTED
+    );
+
+    // The AWS key finding exists, is high severity, and is NOT stored verbatim.
+    let aws = sqlx::query(
+        "select kind, severity, redacted from findings \
+         where tenant_id='acme' and session_id='leaky' and rule='aws_access_key'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(aws.get::<String, _>("kind"), "secret");
+    assert_eq!(aws.get::<String, _>("severity"), "high");
+    assert_ne!(
+        aws.get::<String, _>("redacted"),
+        "AKIAIOSFODNN7EXAMPLE",
+        "raw secret must be masked, never stored verbatim"
+    );
+
+    // The email finding exists and is medium severity.
+    let email = sqlx::query(
+        "select severity from findings \
+         where tenant_id='acme' and session_id='leaky' and rule='email'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(email.get::<String, _>("severity"), "medium");
+
+    // Belt-and-suspenders: the raw secret appears in NO redacted value at all.
+    let raw_leaks = sqlx::query(
+        "select count(*) c from findings \
+         where tenant_id='acme' and redacted = 'AKIAIOSFODNN7EXAMPLE'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get::<i64, _>("c");
+    assert_eq!(raw_leaks, 0, "no finding may store the raw secret");
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn large_body_is_accepted_not_413(pool: PgPool) {
     let token = seed(&pool).await;
     // One event with ~3 MB of content — would exceed axum's default 2 MB body limit (413)
