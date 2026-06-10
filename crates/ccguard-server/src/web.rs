@@ -94,7 +94,9 @@ pub fn nav() -> Markup {
             a href="/dashboard/search" { "search" } " · "
             a href="/dashboard/findings" { "findings" } " · "
             a href="/dashboard/fleet" { "fleet" } " · "
-            a href="/dashboard/policy" { "policy" }
+            a href="/dashboard/policy" { "policy" } " · "
+            a href="/dashboard/review" { "review" } " · "
+            a href="/dashboard/roles" { "roles" }
         }
     }
 }
@@ -105,6 +107,8 @@ table{width:100%;border-collapse:collapse;margin-top:12px}th,td{text-align:left;
 .badge{padding:2px 8px;border-radius:10px;font-size:12px}.work{background:#16401f;color:#7fe29a}.personal{background:#402016;color:#e2a07f}.unknown{background:#2a2f3a;color:#9aa4b2}\
 .high{background:#4a1616;color:#e29a9a}.medium{background:#4a3a16;color:#e2c89a}.low{background:#2a2f3a;color:#9aa4b2}\
 .compliant{background:#16401f;color:#7fe29a}.drifted{background:#4a3a16;color:#e2c89a}.stale{background:#2a2f3a;color:#9aa4b2}.tampered{background:#4a1616;color:#e29a9a}.noncompliant_account{background:#4a1616;color:#e29a9a}\
+.on_task{background:#16401f;color:#7fe29a}.review{background:#4a3a16;color:#e2c89a}.off_task{background:#4a1616;color:#e29a9a}\
+.personal_repo{background:#402016;color:#e2a07f}.non_engineer_coding{background:#3a2a4a;color:#c89ae2}\
 .finding{font-size:12px;margin:4px 0 0;color:#e2c89a}\
 .ev{border-left:3px solid #2a2f3a;margin:6px 0;padding:6px 12px;border-radius:4px;background:#161922}\
 .k{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}\
@@ -262,6 +266,28 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
         None => (0i64, 0i64),
     };
 
+    // On-task KPI: share of scored sessions labelled on_task + open-indicator count.
+    let ontask_row = sqlx::query(
+        "select count(*) total, count(*) filter (where label='on_task') ontask \
+         from session_scores where tenant_id = $1",
+    )
+    .bind(&user.tenant_id)
+    .fetch_one(&pool)
+    .await
+    .ok();
+    let (ot_total, ot_on) = match &ontask_row {
+        Some(r) => (r.get::<i64, _>("total"), r.get::<i64, _>("ontask")),
+        None => (0i64, 0i64),
+    };
+    let ot_pct = if ot_total == 0 { 0 } else { ot_on * 100 / ot_total };
+    let open_indicators: i64 = sqlx::query_scalar(
+        "select count(*) from indicators where tenant_id = $1 and status = 'open'",
+    )
+    .bind(&user.tenant_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(0);
+
     page(
         "Dashboard",
         html! {
@@ -287,6 +313,11 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                         a href="/dashboard/fleet" { "Fleet: " }
                         b { (fleet_total) } " devices · "
                         span.badge.tampered { (fleet_noncompliant) " non-compliant" }
+                    }
+                    p {
+                        a href="/dashboard/review" { "On-task: " }
+                        b { (ot_pct) "%" } " of " (ot_total) " sessions · "
+                        a href="/dashboard/review" { span.badge.off_task { (open_indicators) " open indicators" } }
                     }
                 }
             }
@@ -419,6 +450,30 @@ pub async fn session_view(
         findings_by_seq.entry(seq).or_default().push((rule, severity));
     }
 
+    // On-task score + label + reasons for this session (if scored).
+    let score_row = sqlx::query(
+        "select score, label, reasons from session_scores \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    // Indicators raised for this session (any status), newest-first.
+    let indicator_rows = sqlx::query(
+        "select kind, detail, status from indicators \
+         where tenant_id = $1 and session_id = $2 \
+         order by created_at desc, id desc",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
     let (email, class, title, org, name, on_hold) = match &meta {
         Some(m) => (
             m.get::<String, _>("user_email"),
@@ -462,6 +517,32 @@ pub async fn session_view(
                 @if !repo.is_empty() { " · " (repo) }
                 " · " (events.len()) " events · "
                 code { (session_id) }
+            }
+            @if let Some(sr) = &score_row {
+                @let score: i32 = sr.get("score");
+                @let label: String = sr.get("label");
+                @let reasons: Option<String> = sr.get("reasons");
+                p {
+                    "On-task: " b { (score) } " "
+                    span.badge.(label) { (label) }
+                    @if let Some(rs) = &reasons {
+                        @if !rs.is_empty() { " — " (rs) }
+                    }
+                }
+            }
+            @if !indicator_rows.is_empty() {
+                ul style="margin:4px 0 0;padding-left:18px" {
+                    @for ir in &indicator_rows {
+                        @let kind: String = ir.get("kind");
+                        @let detail: Option<String> = ir.get("detail");
+                        @let status: String = ir.get("status");
+                        li.finding {
+                            span.badge.(kind) { (kind) }
+                            @if let Some(d) = &detail { " " (d) }
+                            " (" (status) ")"
+                        }
+                    }
+                }
             }
             p {
                 a href={"/dashboard/sessions/" (session_id) "/export"} { "Export NDJSON" }
@@ -940,4 +1021,325 @@ pub async fn policy_download(
         body,
     )
         .into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Indicator review queue — GET /dashboard/review  (WebUser)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ReviewParams {
+    pub status: Option<String>,
+}
+
+/// Indicator review queue. Lists tenant indicators for the requested `status`
+/// (default `open`), newest-first, each with a session link and per-row
+/// Reviewed / Dismiss buttons. Cookie-authed + tenant-scoped.
+pub async fn review(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Query(params): Query<ReviewParams>,
+) -> Html<String> {
+    let status = params
+        .status
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "open".to_string());
+    let rows = sqlx::query(
+        "select id, user_email, session_id, kind, detail, status, created_at \
+         from indicators where tenant_id = $1 and status = $2 \
+         order by created_at desc, id desc limit 500",
+    )
+    .bind(&user.tenant_id)
+    .bind(&status)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Review queue",
+        html! {
+            (nav())
+            h1 { "Indicator review queue" }
+            p {
+                "Showing " b { (status) } " indicators · "
+                a href="/dashboard/review?status=open" { "open" } " · "
+                a href="/dashboard/review?status=reviewed" { "reviewed" } " · "
+                a href="/dashboard/review?status=dismissed" { "dismissed" }
+            }
+            @if rows.is_empty() {
+                div.card { p { "Review queue clear." } }
+            } @else {
+                table {
+                    thead { tr { th{"Created"} th{"User"} th{"Kind"} th{"Detail"} th{"Session"} th{"Status"} th{"Actions"} } }
+                    tbody {
+                        @for r in &rows {
+                            @let id: i64 = r.get("id");
+                            @let email: Option<String> = r.get("user_email");
+                            @let session_id: Option<String> = r.get("session_id");
+                            @let kind: String = r.get("kind");
+                            @let detail: Option<String> = r.get("detail");
+                            @let st: String = r.get("status");
+                            @let created: chrono::DateTime<chrono::Utc> = r.get("created_at");
+                            tr {
+                                td { (created.format("%Y-%m-%d %H:%M UTC").to_string()) }
+                                td { (email.clone().unwrap_or_default()) }
+                                td { span.badge.(kind) { (kind) } }
+                                td { (detail.clone().unwrap_or_default()) }
+                                td {
+                                    @if let Some(sid) = &session_id {
+                                        a href={"/dashboard/sessions/" (sid)} { (sid.chars().take(8).collect::<String>()) }
+                                    }
+                                }
+                                td { (st) }
+                                td {
+                                    form method="post" action={"/dashboard/indicators/" (id) "/status"} style="display:inline" {
+                                        input type="hidden" name="status" value="reviewed";
+                                        button type="submit" { "Reviewed" }
+                                    }
+                                    " "
+                                    form method="post" action={"/dashboard/indicators/" (id) "/status"} style="display:inline" {
+                                        input type="hidden" name="status" value="dismissed";
+                                        button type="submit" { "Dismiss" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct IndicatorStatusForm {
+    pub status: String,
+}
+
+/// Flip an indicator's status (reviewed | dismissed) from the review queue,
+/// then 303-redirect back. Tenant-scoped: only a row owned by this tenant is
+/// ever touched; an unowned/unknown id is silently ignored. Cookie-authed.
+pub async fn indicator_status(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(id): Path<i64>,
+    Form(f): Form<IndicatorStatusForm>,
+) -> Result<Redirect, AppError> {
+    let status = f.status.trim();
+    if status == "reviewed" || status == "dismissed" {
+        sqlx::query("update indicators set status = $1 where id = $2 and tenant_id = $3")
+            .bind(status)
+            .bind(id)
+            .bind(&user.tenant_id)
+            .execute(&pool)
+            .await?;
+    }
+    Ok(Redirect::to("/dashboard/review"))
+}
+
+// ---------------------------------------------------------------------------
+// Roles + per-repo work-definitions admin — GET/POST /dashboard/roles (WebUser)
+// ---------------------------------------------------------------------------
+
+/// The seven assignable job roles, used to render the role `<select>`.
+const JOB_ROLES: &[&str] = &["engineer", "marketer", "designer", "pm", "ops", "sales", "other"];
+
+/// Roles + per-repo work-definitions admin page (GET). Owner/admin see the two
+/// edit forms; everyone sees the current lists. Cookie-authed + tenant-scoped.
+pub async fn roles_get(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let can_edit = user.role == "owner" || user.role == "admin";
+
+    let role_rows = sqlx::query(
+        "select user_email, job_role, note from employee_roles \
+         where tenant_id = $1 order by user_email",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let repo_rows = sqlx::query(
+        "select repo_host, repo_org, repo_name, classification, note from repo_overrides \
+         where tenant_id = $1 order by repo_host, repo_org, repo_name",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Roles",
+        html! {
+            (nav())
+            h1 { "Roles & work definitions" }
+            @if !can_edit {
+                div.card { p { "Ask an owner or admin to edit roles and work definitions." } }
+            }
+
+            div.card {
+                h1 style="font-size:16px" { "Job roles" }
+                @if can_edit {
+                    form method="post" action="/dashboard/roles" {
+                        input type="hidden" name="kind" value="role";
+                        p { "Employee email " br;
+                            input type="text" name="user_email" placeholder="dev@acme.com" style="width:100%"; }
+                        p { "Job role " br;
+                            select name="job_role" style="width:100%" {
+                                @for r in JOB_ROLES { option value=(r) { (r) } }
+                            }
+                        }
+                        p { "Note " br;
+                            input type="text" name="note" placeholder="optional" style="width:100%"; }
+                        p { button type="submit" { "Save role" } }
+                    }
+                }
+                @if role_rows.is_empty() {
+                    p { "No job roles assigned yet." }
+                } @else {
+                    table {
+                        thead { tr { th{"Email"} th{"Role"} th{"Note"} } }
+                        tbody {
+                            @for r in &role_rows {
+                                @let email: String = r.get("user_email");
+                                @let role: String = r.get("job_role");
+                                @let note: Option<String> = r.get("note");
+                                tr {
+                                    td { (email) }
+                                    td { (role) }
+                                    td { (note.clone().unwrap_or_default()) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div.card {
+                h1 style="font-size:16px" { "Per-repo work definitions" }
+                @if can_edit {
+                    form method="post" action="/dashboard/roles" {
+                        input type="hidden" name="kind" value="repo";
+                        p { "Repo host " br;
+                            input type="text" name="repo_host" placeholder="github.com" style="width:100%"; }
+                        p { "Repo org " br;
+                            input type="text" name="repo_org" placeholder="acme-corp" style="width:100%"; }
+                        p { "Repo name " br;
+                            input type="text" name="repo_name" placeholder="billing" style="width:100%"; }
+                        p { "Classification " br;
+                            select name="classification" style="width:100%" {
+                                option value="work" { "work" }
+                                option value="personal" { "personal" }
+                                option value="unknown" { "unknown" }
+                            }
+                        }
+                        p { "Note " br;
+                            input type="text" name="note" placeholder="optional" style="width:100%"; }
+                        p { button type="submit" { "Save work definition" } }
+                    }
+                }
+                @if repo_rows.is_empty() {
+                    p { "No per-repo overrides yet." }
+                } @else {
+                    table {
+                        thead { tr { th{"Host"} th{"Org"} th{"Name"} th{"Classification"} th{"Note"} } }
+                        tbody {
+                            @for r in &repo_rows {
+                                @let host: String = r.get("repo_host");
+                                @let org: String = r.get("repo_org");
+                                @let name: String = r.get("repo_name");
+                                @let class: String = r.get("classification");
+                                @let note: Option<String> = r.get("note");
+                                tr {
+                                    td { (host) }
+                                    td { (org) }
+                                    td { (name) }
+                                    td { span.badge.(class) { (class) } }
+                                    td { (note.clone().unwrap_or_default()) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct RolesForm {
+    pub kind: String, // role | repo
+    #[serde(default)]
+    pub user_email: String,
+    #[serde(default)]
+    pub job_role: String,
+    #[serde(default)]
+    pub repo_host: String,
+    #[serde(default)]
+    pub repo_org: String,
+    #[serde(default)]
+    pub repo_name: String,
+    #[serde(default)]
+    pub classification: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// Roles admin (POST). Owner/admin only (else 403). Branches on `kind`:
+/// `role` upserts `employee_roles`, `repo` upserts `repo_overrides`. The empty
+/// note is stored as NULL. 303-redirect back to the roles page on success.
+pub async fn roles_set(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<RolesForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let note: Option<String> = {
+        let n = f.note.trim();
+        if n.is_empty() {
+            None
+        } else {
+            Some(n.to_string())
+        }
+    };
+    match f.kind.as_str() {
+        "role" => {
+            sqlx::query(
+                "insert into employee_roles (tenant_id, user_email, job_role, note, updated_at) \
+                 values ($1,$2,$3,$4, now()) \
+                 on conflict (tenant_id, user_email) do update set \
+                   job_role = excluded.job_role, \
+                   note = excluded.note, \
+                   updated_at = now()",
+            )
+            .bind(&user.tenant_id)
+            .bind(f.user_email.trim())
+            .bind(f.job_role.trim())
+            .bind(&note)
+            .execute(&pool)
+            .await?;
+        }
+        "repo" => {
+            sqlx::query(
+                "insert into repo_overrides \
+                 (tenant_id, repo_host, repo_org, repo_name, classification, note, updated_at) \
+                 values ($1,$2,$3,$4,$5,$6, now()) \
+                 on conflict (tenant_id, repo_host, repo_org, repo_name) do update set \
+                   classification = excluded.classification, \
+                   note = excluded.note, \
+                   updated_at = now()",
+            )
+            .bind(&user.tenant_id)
+            .bind(f.repo_host.trim())
+            .bind(f.repo_org.trim())
+            .bind(f.repo_name.trim())
+            .bind(f.classification.trim())
+            .bind(&note)
+            .execute(&pool)
+            .await?;
+        }
+        _ => return Err(AppError::BadRequest("kind must be role or repo")),
+    }
+    Ok(Redirect::to("/dashboard/roles").into_response())
 }

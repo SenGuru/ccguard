@@ -28,6 +28,15 @@ pub fn app(pool: PgPool) -> Router {
             "/dashboard/policy/managed-settings.json",
             get(web::policy_download),
         )
+        .route("/dashboard/review", get(web::review))
+        .route(
+            "/dashboard/indicators/:id/status",
+            post(web::indicator_status),
+        )
+        .route(
+            "/dashboard/roles",
+            get(web::roles_get).post(web::roles_set),
+        )
         .route("/v1/tenants", post(tenants::create_tenant))
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))

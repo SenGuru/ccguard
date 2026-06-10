@@ -802,3 +802,224 @@ async fn fleet_page_without_cookie_redirects_to_login(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/login");
 }
+
+/// GET a dashboard page with the cookie and return its body as a string.
+async fn get_html(pool: &PgPool, uri: &str, cookie: &str) -> (StatusCode, String) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .header("cookie", format!("ccg_session={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// Review queue end-to-end: capture a PERSONAL-repo, no-commit session (raises
+/// `personal_repo` + `off_task` indicators), then verify the review queue shows
+/// them and the Reviewed button flips an indicator out of the open queue.
+#[sqlx::test(migrations = "./migrations")]
+async fn review_queue_lists_indicators_and_review_button_flips_status(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    // org NOT allowlisted -> personal; no commit -> off_task. Raises both
+    // `personal_repo` and `off_task` indicators at capture time.
+    let body = serde_json::json!({
+        "session_id": "sess-review",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "my-side-project", "name": "toy", "path": "C:\\side"},
+        "title": "hobby",
+        "cwd": "C:\\side",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt", "content": "build my game"},
+            {"seq": 1, "ts": "2026-06-10T10:00:01Z", "kind": "assistant_text", "content": "ok"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+
+    // Review queue (open) shows the personal_repo indicator + the session id.
+    let (status, html) = get_html(&pool, "/dashboard/review", &token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("personal_repo"),
+        "review queue must list the personal_repo indicator"
+    );
+    assert!(
+        html.contains("sess-review"),
+        "review queue must reference the session"
+    );
+
+    // Grab the personal_repo indicator id straight from the table.
+    let id: i64 = sqlx::query_scalar(
+        "select id from indicators where tenant_id='acme' and session_id='sess-review' \
+         and kind='personal_repo'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // POST the Reviewed form -> 303.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/dashboard/indicators/{id}/status"))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::from("status=reviewed"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/dashboard/review");
+
+    let st: String = sqlx::query_scalar("select status from indicators where id=$1")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(st, "reviewed", "indicator must be flipped to reviewed");
+
+    // Re-GET the open queue: the reviewed row no longer shows for that id.
+    let (status, html) = get_html(&pool, "/dashboard/review?status=open", &token).await;
+    assert_eq!(status, StatusCode::OK);
+    let still_open: i64 = sqlx::query_scalar(
+        "select count(*) from indicators where tenant_id='acme' and session_id='sess-review' \
+         and kind='personal_repo' and status='open'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(still_open, 0, "the reviewed indicator left the open queue");
+    // The remaining open off_task indicator still shows, but not as personal_repo
+    // duplicated for our reviewed row — assert the off_task kind is present.
+    assert!(
+        html.contains("off_task"),
+        "the still-open off_task indicator should remain in the open queue"
+    );
+}
+
+/// The session view surfaces the on-task score + label for a captured session.
+#[sqlx::test(migrations = "./migrations")]
+async fn session_view_shows_on_task_score(pool: PgPool) {
+    seed_user(&pool).await;
+    let ingest = seed_ingest(&pool).await;
+
+    // Allowlisted work repo + a commit + a ticket reference => on_task, high score.
+    let body = serde_json::json!({
+        "session_id": "sess-score",
+        "user_email": "dev@acme.com",
+        "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
+        "title": "ship it",
+        "cwd": "C:\\w",
+        "events": [
+            {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt", "content": "work on PROJ-7 please"},
+            {"seq": 1, "ts": "2026-06-10T10:00:01Z", "kind": "tool_call", "tool_name": "Bash", "target": "git commit -m x", "content": "{\"command\":\"git commit -m x\"}"},
+            {"seq": 2, "ts": "2026-06-10T10:00:02Z", "kind": "assistant_text", "content": "done"}
+        ]
+    })
+    .to_string();
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/capture")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let token = login_cookie(&pool).await;
+    let (status, html) = get_html(&pool, "/dashboard/sessions/sess-score", &token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("On-task:"),
+        "session view must show the on-task score line"
+    );
+    assert!(
+        html.contains("on_task"),
+        "session view must show the on_task label badge"
+    );
+}
+
+/// The roles page shows both admin forms to an owner, and a posted role appears
+/// in the current list.
+#[sqlx::test(migrations = "./migrations")]
+async fn roles_page_shows_forms_and_post_role_lists_it(pool: PgPool) {
+    seed_user(&pool).await;
+    let token = login_cookie(&pool).await;
+
+    // Owner sees both forms.
+    let (status, html) = get_html(&pool, "/dashboard/roles", &token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Job roles"), "roles page must show the job-roles form");
+    assert!(
+        html.contains("Per-repo work definitions"),
+        "roles page must show the per-repo work-definition form"
+    );
+
+    // POST a role assignment -> 303.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/dashboard/roles")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::from("kind=role&user_email=x@acme&job_role=marketer"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/dashboard/roles");
+
+    // GET again -> the assignment is listed as a marketer.
+    let (status, html) = get_html(&pool, "/dashboard/roles", &token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("x@acme"), "the assigned email must be listed");
+    assert!(html.contains("marketer"), "the assigned role must be listed");
+}
+
+/// The review queue is gated by the WebUser cookie — no cookie -> /login.
+#[sqlx::test(migrations = "./migrations")]
+async fn review_page_without_cookie_redirects_to_login(pool: PgPool) {
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/dashboard/review")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+}
