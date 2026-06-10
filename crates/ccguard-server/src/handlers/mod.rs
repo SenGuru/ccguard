@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod findings;
+pub mod fleet;
 pub mod ingest;
 pub mod search;
 pub mod sessions;

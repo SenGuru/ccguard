@@ -4,7 +4,7 @@ use axum::Router;
 use sqlx::PgPool;
 
 use crate::handlers::{
-    capture, findings, ingest, search, sessions, summary, tenants, timeline, users,
+    capture, findings, fleet, ingest, search, sessions, summary, tenants, timeline, users,
 };
 use crate::web;
 
@@ -27,6 +27,10 @@ pub fn app(pool: PgPool) -> Router {
             "/v1/capture",
             post(capture::capture).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
         )
+        .route("/v1/orgs/:tenant/policy", post(fleet::set_policy))
+        .route("/v1/orgs/:tenant/fleet", get(fleet::list))
+        .route("/v1/enroll", post(fleet::enroll))
+        .route("/v1/attest", post(fleet::attest))
         .route("/v1/orgs/:tenant/summary", get(summary::summary))
         .route("/v1/orgs/:tenant/sessions", get(timeline::list_sessions))
         .route("/v1/orgs/:tenant/findings", get(findings::list))

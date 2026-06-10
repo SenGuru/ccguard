@@ -7,6 +7,7 @@ pub enum AppError {
     Unauthorized(&'static str),
     Forbidden(&'static str),
     BadRequest(&'static str),
+    Conflict(&'static str),
 }
 
 impl From<sqlx::Error> for AppError {
@@ -26,6 +27,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg).into_response(),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg).into_response(),
         }
     }
 }
