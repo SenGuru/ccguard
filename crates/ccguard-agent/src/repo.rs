@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Command;
 
 use ccguard_core::event::Repo;
@@ -47,6 +48,28 @@ fn git_remote(cwd: &str) -> Option<String> {
     }
 }
 
+/// Memoizes repo attribution per working directory, so a transcript with thousands of
+/// interactions in the same dir does one `git` lookup instead of thousands.
+#[derive(Default)]
+pub struct RepoCache {
+    cache: HashMap<String, Repo>,
+}
+
+impl RepoCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn resolve(&mut self, cwd: &str) -> Repo {
+        if let Some(r) = self.cache.get(cwd) {
+            return r.clone();
+        }
+        let r = repo_for_cwd(cwd);
+        self.cache.insert(cwd.to_string(), r.clone());
+        r
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +88,15 @@ mod tests {
         let r = repo_from_remote(None, "C:\\scratch");
         assert!(r.host.is_none() && r.org.is_none());
         assert_eq!(r.path.as_deref(), Some("C:\\scratch"));
+    }
+
+    #[test]
+    fn cache_resolves_and_memoizes() {
+        let mut c = RepoCache::new();
+        let cwd = std::env::temp_dir().to_string_lossy().to_string();
+        let r1 = c.resolve(&cwd);
+        let r2 = c.resolve(&cwd); // served from cache, same result
+        assert_eq!(r1, r2);
+        assert_eq!(r1.path.as_deref(), Some(cwd.as_str()));
     }
 }

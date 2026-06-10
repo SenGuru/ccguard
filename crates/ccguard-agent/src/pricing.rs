@@ -14,9 +14,26 @@ pub fn price_per_mtok(model: &str) -> (f64, f64) {
     }
 }
 
-pub fn estimate_cost(model: &str, tokens_in: i64, tokens_out: i64) -> f64 {
+/// Full cost including cached-input tokens. Cache reads bill at ~0.1x the input rate,
+/// cache writes (creation) at ~1.25x (Claude's default 5-min TTL).
+pub fn estimate_cost_full(
+    model: &str,
+    tokens_in: i64,
+    tokens_out: i64,
+    cache_read: i64,
+    cache_creation: i64,
+) -> f64 {
     let (pin, pout) = price_per_mtok(model);
-    (tokens_in as f64 / 1_000_000.0) * pin + (tokens_out as f64 / 1_000_000.0) * pout
+    let m = 1_000_000.0;
+    (tokens_in as f64 / m) * pin
+        + (tokens_out as f64 / m) * pout
+        + (cache_read as f64 / m) * (pin * 0.1)
+        + (cache_creation as f64 / m) * (pin * 1.25)
+}
+
+/// Cost from uncached input + output only (no cache tokens).
+pub fn estimate_cost(model: &str, tokens_in: i64, tokens_out: i64) -> f64 {
+    estimate_cost_full(model, tokens_in, tokens_out, 0, 0)
 }
 
 #[cfg(test)]
@@ -32,5 +49,13 @@ mod tests {
     #[test]
     fn unknown_model_defaults_to_sonnet_pricing() {
         assert_eq!(price_per_mtok("mystery"), (3.0, 15.0));
+    }
+
+    #[test]
+    fn cache_tokens_priced_at_reduced_rates() {
+        // opus input $5/M → cache_read @ 0.1x = $0.50/M, cache_creation @ 1.25x = $6.25/M.
+        // 1M cache_read + 1M cache_creation = 0.50 + 6.25 = $6.75
+        let c = estimate_cost_full("claude-opus-4-8", 0, 0, 1_000_000, 1_000_000);
+        assert!((c - 6.75).abs() < 1e-9);
     }
 }

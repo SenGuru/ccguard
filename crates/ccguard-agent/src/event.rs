@@ -3,16 +3,27 @@ use chrono::{DateTime, Utc};
 use ccguard_core::event::{Activity, CcEvent, User};
 
 use crate::parse::Interaction;
-use crate::pricing::estimate_cost;
-use crate::repo::repo_for_cwd;
+use crate::pricing::estimate_cost_full;
+use crate::repo::RepoCache;
 
 /// Map a parsed interaction to a CcEvent ready to POST. Returns None if it has no cwd or an
 /// unparseable timestamp. `tenant_id` is left empty (the server sets it from the ingest token).
-pub fn interaction_to_event(i: &Interaction, user_email: &str) -> Option<CcEvent> {
+/// `repos` memoizes repo attribution so repeated cwds don't re-run `git`.
+pub fn interaction_to_event(
+    i: &Interaction,
+    user_email: &str,
+    repos: &mut RepoCache,
+) -> Option<CcEvent> {
     let cwd = i.cwd.clone()?;
     let ts: DateTime<Utc> = i.ts.parse().ok()?;
-    let repo = repo_for_cwd(&cwd);
-    let cost = estimate_cost(&i.model, i.tokens_in, i.tokens_out);
+    let repo = repos.resolve(&cwd);
+    let cost = estimate_cost_full(
+        &i.model,
+        i.tokens_in,
+        i.tokens_out,
+        i.cache_read,
+        i.cache_creation,
+    );
 
     Some(CcEvent {
         tenant_id: String::new(),
@@ -52,8 +63,11 @@ mod tests {
             model: "claude-opus-4-8".into(),
             tokens_in: 1_000_000,
             tokens_out: 0,
+            cache_read: 0,
+            cache_creation: 0,
         };
-        let ev = interaction_to_event(&i, "dev@acme.com").unwrap();
+        let mut cache = RepoCache::new();
+        let ev = interaction_to_event(&i, "dev@acme.com", &mut cache).unwrap();
         assert_eq!(ev.tool, "claude-code");
         assert_eq!(ev.source_layer, "endpoint_agent");
         assert_eq!(ev.tenant_id, "");
@@ -72,10 +86,13 @@ mod tests {
             model: "claude-sonnet-4-6".into(),
             tokens_in: 10,
             tokens_out: 5,
+            cache_read: 0,
+            cache_creation: 0,
         };
-        assert!(interaction_to_event(&base, "x").is_none()); // no cwd
+        let mut cache = RepoCache::new();
+        assert!(interaction_to_event(&base, "x", &mut cache).is_none()); // no cwd
 
         let bad_ts = Interaction { cwd: Some("/tmp".into()), ts: "not-a-date".into(), ..base };
-        assert!(interaction_to_event(&bad_ts, "x").is_none());
+        assert!(interaction_to_event(&bad_ts, "x", &mut cache).is_none());
     }
 }

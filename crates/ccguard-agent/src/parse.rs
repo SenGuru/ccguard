@@ -9,6 +9,8 @@ pub struct Interaction {
     pub model: String,
     pub tokens_in: i64,
     pub tokens_out: i64,
+    pub cache_read: i64,
+    pub cache_creation: i64,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +41,10 @@ struct Usage {
     input_tokens: i64,
     #[serde(default)]
     output_tokens: i64,
+    #[serde(default)]
+    cache_read_input_tokens: i64,
+    #[serde(default)]
+    cache_creation_input_tokens: i64,
 }
 
 /// Parse newline-delimited transcript JSON into billable assistant interactions.
@@ -80,6 +86,8 @@ pub fn parse_transcript(content: &str, fallback_cwd: Option<&str>) -> Vec<Intera
             model: msg.model.unwrap_or_else(|| "unknown".to_string()),
             tokens_in: usage.input_tokens,
             tokens_out: usage.output_tokens,
+            cache_read: usage.cache_read_input_tokens,
+            cache_creation: usage.cache_creation_input_tokens,
         });
     }
     out
@@ -94,7 +102,7 @@ mod tests {
         // a user line carries cwd; the following assistant line carries usage but no cwd
         let content = r#"
 {"type":"user","sessionId":"s1","cwd":"C:\\work\\repo","timestamp":"2026-06-10T10:00:00Z","message":{"role":"user","content":"hi"}}
-{"type":"assistant","sessionId":"s1","timestamp":"2026-06-10T10:00:01Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":1000,"output_tokens":200}}}
+{"type":"assistant","sessionId":"s1","timestamp":"2026-06-10T10:00:01Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":5000,"cache_creation_input_tokens":300}}}
 {"type":"file-history-snapshot"}
 {"type":"assistant","sessionId":"s1","timestamp":"2026-06-10T10:00:02Z","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0}}}
 "#;
@@ -106,6 +114,8 @@ mod tests {
         assert_eq!(i.model, "claude-opus-4-8");
         assert_eq!(i.tokens_in, 1000);
         assert_eq!(i.tokens_out, 200);
+        assert_eq!(i.cache_read, 5000);
+        assert_eq!(i.cache_creation, 300);
         assert_eq!(i.ts, "2026-06-10T10:00:01Z");
     }
 

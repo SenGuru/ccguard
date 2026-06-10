@@ -80,6 +80,7 @@ fn main() -> anyhow::Result<()> {
     let mut st = State::load(&state_path);
     let poster = Poster::new(&args.server, &args.token);
 
+    let mut repos = repo::RepoCache::new();
     let mut sent = 0usize;
     let mut skipped = 0usize;
     for file in paths::list_transcripts(&claude_dir) {
@@ -92,7 +93,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
         for interaction in parse_transcript(&chunk, None) {
-            match interaction_to_event(&interaction, &email) {
+            match interaction_to_event(&interaction, &email, &mut repos) {
                 Some(ev) => match poster.post(&ev) {
                     Ok(202) => sent += 1,
                     Ok(code) => {
