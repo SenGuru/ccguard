@@ -8,4 +8,5 @@ pub mod sessions;
 pub mod summary;
 pub mod tenants;
 pub mod timeline;
+pub mod triage;
 pub mod users;

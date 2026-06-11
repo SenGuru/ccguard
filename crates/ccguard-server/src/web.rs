@@ -100,6 +100,7 @@ pub fn nav() -> Markup {
                 a href="/dashboard/fleet" { "Fleet" }
                 a href="/dashboard/policy" { "Policy" }
                 a href="/dashboard/review" { "Review" }
+                a href="/dashboard/triage" { "Triage" }
                 a href="/dashboard/roles" { "Roles" }
             }
         }
@@ -490,6 +491,18 @@ pub async fn session_view(
     .await
     .unwrap_or_default();
 
+    // LLM triage verdict for this session (if the judge has classified it).
+    let triage_row = sqlx::query(
+        "select label, confidence, reason, enforceable, resolved_by, model \
+         from session_triage where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
     let (email, class, title, org, name, on_hold) = match &meta {
         Some(m) => (
             m.get::<String, _>("user_email"),
@@ -543,6 +556,23 @@ pub async fn session_view(
                     span.badge.(label) { (label) }
                     @if let Some(rs) = &reasons {
                         @if !rs.is_empty() { " — " (rs) }
+                    }
+                }
+            }
+            @if let Some(tr) = &triage_row {
+                @let tlabel: String = tr.get("label");
+                @let tconf: f32 = tr.get("confidence");
+                @let treason: String = tr.get("reason");
+                @let tenf: bool = tr.get("enforceable");
+                @let tby: String = tr.get("resolved_by");
+                @let tmodel: String = tr.get("model");
+                p {
+                    "LLM triage: "
+                    span.badge.(triage_label_class(&tlabel)) { (tlabel) }
+                    " " (format!("{:.0}%", tconf * 100.0)) " — " (treason)
+                    " · " small style="color:var(--ink-3)" {
+                        (tby) "/" (tmodel) " · "
+                        @if tenf { "enforceable" } @else { "visibility only" }
                     }
                 }
             }
@@ -1358,4 +1388,263 @@ pub async fn roles_set(
         _ => return Err(AppError::BadRequest("kind must be role or repo")),
     }
     Ok(Redirect::to("/dashboard/roles").into_response())
+}
+
+// ---- LLM triage --------------------------------------------------------------
+
+/// Render the Triage page with an optional result banner. Shows API-key status,
+/// the tenant's work-definition config (owner/admin editable), how many sessions
+/// are still unclassified, a "run" action, and the most recent verdicts.
+async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) -> Html<String> {
+    let cfg = crate::handlers::triage::load_config(pool, &user.tenant_id)
+        .await
+        .unwrap_or_default();
+    let can_edit = user.role == "owner" || user.role == "admin";
+    let key_present = crate::triage_client::api_key_present();
+
+    // How many sessions are still unclassified (and not yet triaged).
+    let unclassified: i64 = sqlx::query_scalar(
+        "select count(*) from captured_sessions s \
+         left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
+         where s.tenant_id=$1 and s.classification='unknown' and t.session_id is null",
+    )
+    .bind(&user.tenant_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // Verdict tallies + recent verdicts.
+    let trows = sqlx::query(
+        "select t.session_id, t.label, t.confidence, t.reason, t.enforceable, t.resolved_by, \
+                s.title, s.repo_org, s.repo_name \
+         from session_triage t \
+         left join captured_sessions s on s.tenant_id=t.tenant_id and s.session_id=t.session_id \
+         where t.tenant_id=$1 order by t.updated_at desc limit 100",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let (mut tw, mut tp, mut tu) = (0i64, 0i64, 0i64);
+    for r in &trows {
+        match r.get::<String, _>("label").as_str() {
+            "work" => tw += 1,
+            "personal" => tp += 1,
+            _ => tu += 1,
+        }
+    }
+
+    page(
+        "Triage",
+        html! {
+            (nav())
+            h1 { "LLM triage — classify the unclassified" }
+            @if let Some(b) = banner { (b) }
+            div.card {
+                p {
+                    "When the deterministic signal cascade can't tell whether a session is work or personal, "
+                    "a Claude judge reads the repo, prompts and touched files and labels it "
+                    b { "work" } ", " b { "personal" } ", or " b { "unsure" } " with a one-line reason."
+                }
+                p {
+                    "Verdicts update the dashboard view immediately. For usage-limiting / enforcement a verdict only "
+                    "counts once an independent structural signal agrees " b { "or" } " an admin confirms it — "
+                    "session content is model-judged and gameable, so a wrong " i { "personal" } " must not throttle anyone on its own."
+                }
+                p {
+                    "Anthropic API key: "
+                    @if key_present { span.badge.work { "configured" } }
+                    @else { span.badge.high { "not set" } " — set " code { "ANTHROPIC_API_KEY" } " (and optionally " code { "ANTHROPIC_BASE_URL" } " to keep content in your tenancy) and restart the server." }
+                }
+                p {
+                    b { (unclassified) } " session(s) currently unclassified · verdicts so far: "
+                    span.badge.work { "work " (tw) } " "
+                    span.badge.personal { "personal " (tp) } " "
+                    span.badge.unknown { "unsure " (tu) }
+                }
+                @if can_edit && cfg.enabled && key_present && unclassified > 0 {
+                    form method="post" action="/dashboard/triage/run" style="display:inline" {
+                        button type="submit" { "Run triage on next " (unclassified.min(25)) " session(s)" }
+                    }
+                } @else if can_edit && !cfg.enabled {
+                    p.err { "Triage is disabled — enable it below to run." }
+                }
+            }
+            @if can_edit {
+                div.card {
+                    h3 { "Configuration" }
+                    form method="post" action="/dashboard/triage/config" {
+                        p {
+                            label {
+                                input type="checkbox" name="enabled" value="on" checked[cfg.enabled] style="width:auto;margin-right:8px";
+                                "Enable LLM triage for this org"
+                            }
+                        }
+                        p { "What counts as work for your org (fed to the judge) " br;
+                            textarea name="work_definition" rows="4" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="e.g. Anything in the acme-corp GitHub org, the internal GitLab, or under C:\\work. Internal tooling and prototypes count as work." { (cfg.work_definition) } }
+                        p { "Judge model " br;
+                            input type="text" name="model" value=(cfg.model) style="width:320px"; }
+                        p { button type="submit" { "Save triage settings" } }
+                    }
+                }
+            }
+            @if !trows.is_empty() {
+                h3 { "Recent verdicts" }
+                table {
+                    thead { tr { th{"Session"} th{"Verdict"} th{"Conf."} th{"Enforceable"} th{"Reason"} th{} } }
+                    tbody {
+                        @for r in &trows {
+                            @let sid: String = r.get("session_id");
+                            @let label: String = r.get("label");
+                            @let conf: f32 = r.get("confidence");
+                            @let enf: bool = r.get("enforceable");
+                            @let by: String = r.get("resolved_by");
+                            @let reason: String = r.get("reason");
+                            @let title: Option<String> = r.get("title");
+                            @let org: Option<String> = r.get("repo_org");
+                            @let name: Option<String> = r.get("repo_name");
+                            tr {
+                                td {
+                                    a href={"/dashboard/sessions/" (sid)} {
+                                        (title.clone().filter(|t| !t.is_empty())
+                                            .unwrap_or_else(|| sid.chars().take(8).collect()))
+                                    }
+                                    @let repo = format!("{}/{}", org.clone().unwrap_or_default(), name.clone().unwrap_or_default());
+                                    @if repo != "/" { br; small style="color:var(--ink-3)" { (repo) } }
+                                }
+                                td { span.badge.(triage_label_class(&label)) { (label) } }
+                                td { (format!("{:.0}%", conf * 100.0)) }
+                                td {
+                                    @if enf { span.badge.work { "yes" } @if by == "human" { " (confirmed)" } }
+                                    @else { span.badge.unknown { "no" } }
+                                }
+                                td { (reason) }
+                                td {
+                                    @if can_edit && !enf {
+                                        form method="post" action={"/dashboard/triage/" (sid) "/confirm"} style="display:inline" {
+                                            button type="submit" style="padding:4px 9px;font-size:12px" { "Confirm" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// Map a triage label to the CSS badge class (reuse the existing palette).
+fn triage_label_class(label: &str) -> &'static str {
+    match label {
+        "work" => "work",
+        "personal" => "personal",
+        _ => "unknown",
+    }
+}
+
+/// GET /dashboard/triage
+pub async fn triage_page(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    render_triage(&pool, &user, None).await
+}
+
+#[derive(Deserialize)]
+pub struct TriageConfigForm {
+    #[serde(default)]
+    pub enabled: Option<String>,
+    #[serde(default)]
+    pub work_definition: String,
+    #[serde(default)]
+    pub model: String,
+}
+
+/// POST /dashboard/triage/config — owner/admin upsert of the tenant triage config.
+pub async fn triage_config_set(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<TriageConfigForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let enabled = f.enabled.as_deref() == Some("on");
+    let model = if f.model.trim().is_empty() {
+        ccguard_core::triage::DEFAULT_MODEL.to_string()
+    } else {
+        f.model.trim().to_string()
+    };
+    sqlx::query(
+        "insert into tenant_triage_config (tenant_id, enabled, work_definition, model, updated_at) \
+         values ($1,$2,$3,$4, now()) \
+         on conflict (tenant_id) do update set \
+           enabled = excluded.enabled, work_definition = excluded.work_definition, \
+           model = excluded.model, updated_at = now()",
+    )
+    .bind(&user.tenant_id)
+    .bind(enabled)
+    .bind(f.work_definition.trim())
+    .bind(&model)
+    .execute(&pool)
+    .await?;
+    Ok(Redirect::to("/dashboard/triage").into_response())
+}
+
+/// POST /dashboard/triage/run — sweep up to 25 unclassified sessions through the
+/// judge, then re-render the page with a result banner. Owner/admin only.
+pub async fn triage_run(user: WebUser, State(pool): State<PgPool>) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let cfg = crate::handlers::triage::load_config(&pool, &user.tenant_id)
+        .await
+        .unwrap_or_default();
+    if !cfg.enabled {
+        return Err(AppError::BadRequest("triage is disabled for this org"));
+    }
+    let summary = crate::handlers::triage::run_unclassified(&pool, &user.tenant_id, &cfg, 25)
+        .await
+        .unwrap_or_default();
+
+    let banner = html! {
+        div.card style="border-color:var(--accent);background:var(--accent-wash)" {
+            @if summary.attempted == 0 && summary.errors.is_empty() {
+                p { "Nothing to triage — no unclassified sessions remaining." }
+            } @else {
+                p {
+                    b { "Triaged " (summary.attempted) " session(s):" } " "
+                    span.badge.work { "work " (summary.work) } " "
+                    span.badge.personal { "personal " (summary.personal) } " "
+                    span.badge.unknown { "unsure " (summary.unsure) }
+                }
+            }
+            @if !summary.errors.is_empty() {
+                @for e in &summary.errors {
+                    p.err { "⚠ " (e) }
+                }
+            }
+        }
+    };
+    Ok(render_triage(&pool, &user, Some(banner)).await.into_response())
+}
+
+/// POST /dashboard/triage/:session_id/confirm — a human confirms a verdict so it
+/// counts toward enforcement / usage-limiting. Owner/admin only.
+pub async fn triage_confirm(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(session_id): Path<String>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    sqlx::query(
+        "update session_triage set enforceable = true, resolved_by = 'human', updated_at = now() \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .execute(&pool)
+    .await?;
+    Ok(Redirect::to("/dashboard/triage").into_response())
 }

@@ -37,6 +37,13 @@ pub fn app(pool: PgPool) -> Router {
             "/dashboard/roles",
             get(web::roles_get).post(web::roles_set),
         )
+        .route("/dashboard/triage", get(web::triage_page))
+        .route("/dashboard/triage/config", post(web::triage_config_set))
+        .route("/dashboard/triage/run", post(web::triage_run))
+        .route(
+            "/dashboard/triage/:session_id/confirm",
+            post(web::triage_confirm),
+        )
         .route("/v1/tenants", post(tenants::create_tenant))
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))

@@ -317,6 +317,7 @@ dependencies = [
  "http-body-util",
  "maud",
  "rand 0.8.6",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
