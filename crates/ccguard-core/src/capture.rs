@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::event::Repo;
+use crate::provenance::RawSignals;
 
 /// The typed kind of one activity atom in a Claude Code session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +66,10 @@ pub struct CapturedSession {
     pub title: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Content-free provenance signals gathered from the working tree (git +
+    /// manifests). Optional so older agents / payloads stay compatible.
+    #[serde(default)]
+    pub signals: Option<RawSignals>,
     pub events: Vec<CapturedEvent>,
 }
 

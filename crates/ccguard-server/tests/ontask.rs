@@ -25,6 +25,17 @@ async fn seed(pool: &PgPool) -> String {
     .execute(pool)
     .await
     .unwrap();
+    // Provenance policy: the personal denylist + signed personal email domain.
+    // A session is only PERSONAL with an affirmative personal signal confirmed by
+    // a second independent one (per the provenance cascade) — never merely because
+    // its remote isn't allowlisted (that is now UNCLASSIFIED, not personal).
+    sqlx::query(
+        "insert into provenance_policy (tenant_id, personal_orgs, personal_email_domains) \
+         values ('acme', 'my-side-project, random-org', 'gmail.com')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     let (ingest_token, ingest_hash) = generate_token();
     sqlx::query("insert into api_tokens (tenant_id, token_hash) values ('acme',$1)")
         .bind(&ingest_hash)
@@ -178,11 +189,13 @@ async fn work_with_commit_and_ticket_scores_on_task(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn personal_no_commit_scores_off_task_and_raises_indicators(pool: PgPool) {
     let ingest = seed(&pool).await;
-    // Has a remote but org is NOT allowlisted => personal. No commit.
+    // Confirmed personal: a personal-denylist org remote (P-REMOTE) AND a signed
+    // commit by a personal email (P-EMAIL-SIGNED) — two independent signals. No commit work.
     let body = serde_json::json!({
         "session_id":"s_personal","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"my-side-project","name":"toy","path":"C:\\side"},
         "title":"hobby","cwd":"C:\\side",
+        "signals":{"committer_email":"me@gmail.com","commit_signed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"build my game"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"assistant_text","content":"ok"}
@@ -281,11 +294,12 @@ async fn indicator_status_flow(pool: PgPool) {
     let ingest = seed(&pool).await;
     let session = login(&pool, "acme", "boss@acme.com", "pw12345").await;
 
-    // Raise indicators via a personal-repo capture.
+    // Raise indicators via a confirmed-personal capture (P-REMOTE + P-EMAIL-SIGNED).
     let body = serde_json::json!({
         "session_id":"s_flow","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"random-org","name":"toy","path":"C:\\side"},
         "title":"hobby","cwd":"C:\\side",
+        "signals":{"committer_email":"me@gmail.com","commit_signed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"hi"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"assistant_text","content":"ok"}
@@ -330,6 +344,7 @@ async fn indicators_are_idempotent_on_recapture(pool: PgPool) {
         "session_id":"s_idem","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"random-org","name":"toy","path":"C:\\side"},
         "title":"hobby","cwd":"C:\\side",
+        "signals":{"committer_email":"me@gmail.com","commit_signed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"hi"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"assistant_text","content":"ok"}

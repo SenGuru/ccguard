@@ -6,6 +6,7 @@ mod paths;
 mod poster;
 mod pricing;
 mod repo;
+mod signals;
 mod state;
 mod transcript;
 
@@ -42,6 +43,10 @@ struct Args {
     /// and post CapturedSessions to /v1/capture instead of token-only events to /v1/events.
     #[arg(long)]
     capture: bool,
+    /// Name of the MDM-injected corporate env var whose presence marks a corp session
+    /// (provenance signal C-MDM-ENV). Only its presence is reported, never its value.
+    #[arg(long, default_value = "CCGUARD_CORP")]
+    corp_env: String,
     /// Attestation mode: enroll this device, fetch the expected policy, evaluate the on-disk
     /// managed-settings, and POST the attestation to /v1/attest. Takes priority over harvest modes.
     #[arg(long)]
@@ -280,6 +285,7 @@ fn main() -> anyhow::Result<()> {
     let state_path = claude_dir.join("ccguard-agent-state.json");
     let mut st = State::load(&state_path);
     let mut repos = repo::RepoCache::new();
+    let mut sigs = signals::SignalCache::new(&args.corp_env);
 
     if args.capture {
         // Full-capture mode: parse complete transcripts, chunk by content budget, and post
@@ -303,6 +309,8 @@ fn main() -> anyhow::Result<()> {
             session.user_email = email.clone();
             if let Some(cwd) = session.cwd.as_deref() {
                 session.repo = repos.resolve(cwd);
+                // Content-free provenance signals (git + manifest config) for this dir.
+                session.signals = Some(sigs.resolve(cwd));
             }
             if session.session_id.is_empty() {
                 // Use file stem as fallback session id

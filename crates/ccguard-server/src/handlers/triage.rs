@@ -9,7 +9,6 @@
 //! deterministic structural classifier independently agrees. Confirming a verdict
 //! for usage-limiting is a separate, human action (`confirm_triage`).
 
-use ccguard_core::classify::{classify, Allowlist};
 use ccguard_core::event::Classification;
 use ccguard_core::triage::{TriageInput, TriageLabel, TriageVerdict};
 use sqlx::{PgPool, Row};
@@ -140,46 +139,30 @@ pub async fn assemble_input(
     }))
 }
 
-/// Deterministic structural label for a session (re-runs the signal classifier on
-/// the stored repo signals + tenant allowlist). Used to corroborate the LLM
-/// verdict for enforcement gating.
+/// The deterministic structural label for a session, read from the provenance
+/// cascade's recorded verdict. Used to corroborate the LLM verdict for enforcement
+/// gating: an LLM verdict only becomes enforceable when this structural signal
+/// independently agrees (work/work_provisional → Work; personal → Personal).
 async fn structural_label(
     pool: &PgPool,
     tenant_id: &str,
     session_id: &str,
 ) -> Result<Classification, sqlx::Error> {
     let row = sqlx::query(
-        "select repo_host, repo_org, repo_path from captured_sessions \
-         where tenant_id = $1 and session_id = $2",
+        "select class from session_provenance where tenant_id = $1 and session_id = $2",
     )
     .bind(tenant_id)
     .bind(session_id)
     .fetch_optional(pool)
     .await?;
-    let row = match row {
-        Some(r) => r,
-        None => return Ok(Classification::Unknown),
-    };
-
-    let rules = sqlx::query("select kind, value from allowlist_rules where tenant_id = $1")
-        .bind(tenant_id)
-        .fetch_all(pool)
-        .await?;
-    let mut allow = Allowlist::default();
-    for r in rules {
-        let kind: String = r.get("kind");
-        let value: String = r.get("value");
-        match kind.as_str() {
-            "host" => allow.hosts.push(value),
-            "org" => allow.orgs.push(value),
-            "path_root" => allow.path_roots.push(value),
-            _ => {}
-        }
-    }
-    let host: Option<String> = row.get("repo_host");
-    let org: Option<String> = row.get("repo_org");
-    let path: Option<String> = row.get("repo_path");
-    Ok(classify(host.as_deref(), org.as_deref(), path.as_deref(), &allow).0)
+    Ok(match row.map(|r| r.get::<String, _>("class")) {
+        Some(c) => match c.as_str() {
+            "work" | "work_provisional" => Classification::Work,
+            "personal" => Classification::Personal,
+            _ => Classification::Unknown,
+        },
+        None => Classification::Unknown,
+    })
 }
 
 /// Triage one session end-to-end: call Claude, persist the verdict, mirror the

@@ -30,6 +30,14 @@ async fn seed_ingest(pool: &PgPool) -> String {
     .execute(pool)
     .await
     .unwrap();
+    // Provenance personal denylist (so a confirmed-personal capture is reachable).
+    sqlx::query(
+        "insert into provenance_policy (tenant_id, personal_orgs, personal_email_domains) \
+         values ('acme', 'my-side-project', 'gmail.com')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     let (token, hash) = generate_token();
     sqlx::query("insert into api_tokens (tenant_id, token_hash) values ('acme',$1)")
         .bind(&hash)
@@ -829,14 +837,15 @@ async fn review_queue_lists_indicators_and_review_button_flips_status(pool: PgPo
     seed_user(&pool).await;
     let ingest = seed_ingest(&pool).await;
 
-    // org NOT allowlisted -> personal; no commit -> off_task. Raises both
-    // `personal_repo` and `off_task` indicators at capture time.
+    // Confirmed personal (P-REMOTE personal-org + P-EMAIL-SIGNED) -> personal; no
+    // commit -> off_task. Raises both `personal_repo` and `off_task` indicators.
     let body = serde_json::json!({
         "session_id": "sess-review",
         "user_email": "dev@acme.com",
         "repo": {"host": "github.com", "org": "my-side-project", "name": "toy", "path": "C:\\side"},
         "title": "hobby",
         "cwd": "C:\\side",
+        "signals": {"committer_email": "me@gmail.com", "commit_signed": true},
         "events": [
             {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt", "content": "build my game"},
             {"seq": 1, "ts": "2026-06-10T10:00:01Z", "kind": "assistant_text", "content": "ok"}

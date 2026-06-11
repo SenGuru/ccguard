@@ -48,6 +48,7 @@ fn meta_with(s: &CapturedSession, events: Vec<CapturedEvent>) -> CapturedSession
         repo: s.repo.clone(),
         title: s.title.clone(),
         cwd: s.cwd.clone(),
+        signals: s.signals.clone(),
         events,
     }
 }
@@ -88,6 +89,7 @@ mod tests {
             },
             title: Some("the title".to_string()),
             cwd: Some("C:\\w".to_string()),
+            signals: None,
             events,
         }
     }

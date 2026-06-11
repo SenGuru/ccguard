@@ -101,6 +101,8 @@ pub fn nav() -> Markup {
                 a href="/dashboard/policy" { "Policy" }
                 a href="/dashboard/review" { "Review" }
                 a href="/dashboard/triage" { "Triage" }
+                a href="/dashboard/signals" { "Signals" }
+                a href="/dashboard/usage" { "Usage" }
                 a href="/dashboard/roles" { "Roles" }
             }
         }
@@ -503,6 +505,18 @@ pub async fn session_view(
     .ok()
     .flatten();
 
+    // Deterministic provenance verdict (the primary classifier's cascade output).
+    let prov_row = sqlx::query(
+        "select class, confidence, provisional, resolved_by, reasons \
+         from session_provenance where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
     let (email, class, title, org, name, on_hold) = match &meta {
         Some(m) => (
             m.get::<String, _>("user_email"),
@@ -556,6 +570,23 @@ pub async fn session_view(
                     span.badge.(label) { (label) }
                     @if let Some(rs) = &reasons {
                         @if !rs.is_empty() { " — " (rs) }
+                    }
+                }
+            }
+            @if let Some(pr) = &prov_row {
+                @let pclass: String = pr.get("class");
+                @let pconf: f32 = pr.get("confidence");
+                @let pprov: bool = pr.get("provisional");
+                @let pby: String = pr.get("resolved_by");
+                @let preasons: String = pr.get("reasons");
+                p {
+                    "Provenance: "
+                    span.badge.(provenance_class_badge(&pclass)) { (pclass.replace('_', " ")) }
+                    " " (format!("{:.0}%", pconf * 100.0))
+                    @if pprov { " · " span.badge.medium { "provisional" } }
+                    " · " small style="color:var(--ink-3)" {
+                        (pby)
+                        @if !preasons.is_empty() { " · signals: " (preasons) }
                     }
                 }
             }
@@ -1647,4 +1678,395 @@ pub async fn triage_confirm(
     .execute(&pool)
     .await?;
     Ok(Redirect::to("/dashboard/triage").into_response())
+}
+
+/// Badge class for a provenance class string (reuse the existing palette).
+fn provenance_class_badge(class: &str) -> &'static str {
+    match class {
+        "work" => "work",
+        "work_provisional" => "medium",
+        "personal" => "personal",
+        _ => "unknown",
+    }
+}
+
+// ---- Signals: provenance policy (what counts as corp) ------------------------
+
+/// GET /dashboard/signals — configure the deterministic provenance cascade's
+/// notion of "corp" (hosts, orgs, email domains, ticket prefixes, MDM env var,
+/// registry patterns) plus the personal denylist. Owner/admin editable.
+pub async fn signals_page(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let can_edit = user.role == "owner" || user.role == "admin";
+
+    // Corp hosts/orgs live in allowlist_rules (reused by the cascade).
+    let arows = sqlx::query("select kind, value from allowlist_rules where tenant_id = $1")
+        .bind(&user.tenant_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+    let mut hosts: Vec<String> = Vec::new();
+    let mut orgs: Vec<String> = Vec::new();
+    for r in &arows {
+        match r.get::<String, _>("kind").as_str() {
+            "host" => hosts.push(r.get("value")),
+            "org" => orgs.push(r.get("value")),
+            _ => {}
+        }
+    }
+
+    let p = sqlx::query(
+        "select corp_email_domains, personal_orgs, personal_email_domains, ticket_prefixes, \
+                corp_env_name, registry_patterns from provenance_policy where tenant_id = $1",
+    )
+    .bind(&user.tenant_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let get = |col: &str| -> String { p.as_ref().map(|r| r.get::<String, _>(col)).unwrap_or_default() };
+    let corp_env = {
+        let v = get("corp_env_name");
+        if v.is_empty() { "CCGUARD_CORP".to_string() } else { v }
+    };
+
+    // Verdict tallies across the cascade.
+    let crows = sqlx::query(
+        "select class, count(*) as c from session_provenance where tenant_id = $1 group by class",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "Signals",
+        html! {
+            (nav())
+            h1 { "Provenance signals — what counts as corp" }
+            div.card {
+                p {
+                    "The primary classifier is a deterministic, content-free cascade. Only "
+                    b { "ground-truth" } " signals (a real push to a corp org, or a cryptographically "
+                    "signed commit by a corp identity) auto-resolve a session to " span.badge.work { "work" }
+                    ". Dev-mutable hints (git-config email, registry fingerprints, monorepo, ticket "
+                    "branch, MDM env var) are " b { "corroborators" } " → " span.badge.medium { "work provisional" }
+                    ", never an auto-classify on their own. Nothing reads prompt or code content."
+                }
+                p {
+                    "A session is only " span.badge.personal { "personal" } " with an affirmative personal "
+                    "signal confirmed by two independent signals — so new / separate / remote-less work is "
+                    b { "never silently flagged personal" } ". Anything undecided is "
+                    span.badge.unknown { "unclassified" } " (terminal-safe) and flows to the "
+                    a href="/dashboard/triage" { "LLM triage tier" } "."
+                }
+                @if !crows.is_empty() {
+                    p {
+                        "Verdicts so far: "
+                        @for r in &crows {
+                            @let cl: String = r.get("class");
+                            @let c: i64 = r.get("c");
+                            span.badge.(provenance_class_badge(&cl)) { (cl.replace('_', " ")) " " (c) } " "
+                        }
+                    }
+                }
+            }
+            @if can_edit {
+                div.card {
+                    h3 { "Corporate definition" }
+                    form method="post" action="/dashboard/signals/config" {
+                        p { "Corp git hosts (one per line / comma) " br;
+                            textarea name="corp_hosts" rows="2" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="github.com&#10;gitlab.acme.com" { (hosts.join("\n")) } }
+                        p { "Corp orgs / owners " br;
+                            textarea name="corp_orgs" rows="2" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="acme-corp&#10;acme-internal" { (orgs.join("\n")) } }
+                        p { "Corp email domains (signed-commit identity) " br;
+                            input type="text" name="corp_email_domains" value=(get("corp_email_domains")) style="width:100%" placeholder="acme.com, eng.acme.com"; }
+                        p { "MDM-injected corp env var name (C-MDM-ENV) " br;
+                            input type="text" name="corp_env_name" value=(corp_env) style="width:320px"; }
+                        p { "Ticket key prefixes (branch / commit) " br;
+                            input type="text" name="ticket_prefixes" value=(get("ticket_prefixes")) style="width:100%" placeholder="ACME, BILL, PLAT"; }
+                        p { "Corp registry patterns (npm scope / host substrings) " br;
+                            input type="text" name="registry_patterns" value=(get("registry_patterns")) style="width:100%" placeholder="@acme, artifactory.acme.com"; }
+                        h3 style="margin-top:18px" { "Personal denylist (affirmative personal signals)" }
+                        p { "Known-personal orgs / destinations " br;
+                            input type="text" name="personal_orgs" value=(get("personal_orgs")) style="width:100%" placeholder="my-personal-gh, side-projects"; }
+                        p { "Known-personal email domains (signed) " br;
+                            input type="text" name="personal_email_domains" value=(get("personal_email_domains")) style="width:100%" placeholder="gmail.com, outlook.com"; }
+                        p { button type="submit" { "Save provenance policy" } }
+                    }
+                }
+            }
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct SignalsForm {
+    #[serde(default)] pub corp_hosts: String,
+    #[serde(default)] pub corp_orgs: String,
+    #[serde(default)] pub corp_email_domains: String,
+    #[serde(default)] pub corp_env_name: String,
+    #[serde(default)] pub ticket_prefixes: String,
+    #[serde(default)] pub registry_patterns: String,
+    #[serde(default)] pub personal_orgs: String,
+    #[serde(default)] pub personal_email_domains: String,
+}
+
+/// Split a textarea/CSV field into trimmed tokens.
+fn split_tokens(s: &str) -> Vec<String> {
+    s.split([',', '\n', '\r', ';', ' '])
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// POST /dashboard/signals/config — owner/admin upsert of the provenance policy.
+pub async fn signals_config_set(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<SignalsForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+
+    // Replace corp host/org allowlist rows.
+    sqlx::query("delete from allowlist_rules where tenant_id = $1 and kind in ('host','org')")
+        .bind(&user.tenant_id)
+        .execute(&pool)
+        .await?;
+    for h in split_tokens(&f.corp_hosts) {
+        sqlx::query("insert into allowlist_rules (tenant_id, kind, value) values ($1,'host',$2)")
+            .bind(&user.tenant_id)
+            .bind(&h)
+            .execute(&pool)
+            .await?;
+    }
+    for o in split_tokens(&f.corp_orgs) {
+        sqlx::query("insert into allowlist_rules (tenant_id, kind, value) values ($1,'org',$2)")
+            .bind(&user.tenant_id)
+            .bind(&o)
+            .execute(&pool)
+            .await?;
+    }
+
+    let corp_env = if f.corp_env_name.trim().is_empty() {
+        "CCGUARD_CORP".to_string()
+    } else {
+        f.corp_env_name.trim().to_string()
+    };
+    sqlx::query(
+        "insert into provenance_policy \
+         (tenant_id, corp_email_domains, personal_orgs, personal_email_domains, \
+          ticket_prefixes, corp_env_name, registry_patterns, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,$7, now()) \
+         on conflict (tenant_id) do update set \
+           corp_email_domains = excluded.corp_email_domains, \
+           personal_orgs = excluded.personal_orgs, \
+           personal_email_domains = excluded.personal_email_domains, \
+           ticket_prefixes = excluded.ticket_prefixes, \
+           corp_env_name = excluded.corp_env_name, \
+           registry_patterns = excluded.registry_patterns, \
+           updated_at = now()",
+    )
+    .bind(&user.tenant_id)
+    .bind(f.corp_email_domains.trim())
+    .bind(f.personal_orgs.trim())
+    .bind(f.personal_email_domains.trim())
+    .bind(f.ticket_prefixes.trim())
+    .bind(&corp_env)
+    .bind(f.registry_patterns.trim())
+    .execute(&pool)
+    .await?;
+
+    Ok(Redirect::to("/dashboard/signals").into_response())
+}
+
+// ---- Usage: the Co-Owned Ledger (humane personal split, transparency only) ---
+
+/// GET /dashboard/usage — the personal/work session-count split over a rolling
+/// 7-day window. Cohort aggregate (reciprocal common-knowledge) + per-user RAW
+/// counts (no per-individual personal-share %). Observation-only; no rung armed.
+pub async fn usage_page(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let can_edit = user.role == "owner" || user.role == "admin";
+
+    // Config (allowance % + observation-since).
+    let cfg = sqlx::query(
+        "select personal_allowance_pct, armed, observation_since \
+         from tenant_limit_config where tenant_id = $1",
+    )
+    .bind(&user.tenant_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let allowance: i32 = cfg.as_ref().map(|r| r.get("personal_allowance_pct")).unwrap_or(20);
+    let armed: bool = cfg.as_ref().map(|r| r.get("armed")).unwrap_or(false);
+    let since = cfg
+        .as_ref()
+        .map(|r| r.get::<chrono::DateTime<Utc>, _>("observation_since"))
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| "(not yet configured)".to_string());
+
+    // Confirmed-personal predicate: structural personal OR a human-confirmed verdict.
+    // An LLM-only "personal" is NOT confirmed and is excluded from the meter.
+    let confirmed_personal = "(sp.class='personal' or (st.enforceable and st.label='personal'))";
+    let cohort_sql = format!(
+        "select \
+           count(*) filter (where cs.classification='work') as work, \
+           count(*) filter (where cs.classification='personal' and {cp}) as personal_confirmed, \
+           count(*) filter (where cs.classification='unknown' \
+                or (cs.classification='personal' and not {cp})) as excluded \
+         from captured_sessions cs \
+         left join session_provenance sp on sp.tenant_id=cs.tenant_id and sp.session_id=cs.session_id \
+         left join session_triage st on st.tenant_id=cs.tenant_id and st.session_id=cs.session_id \
+         where cs.tenant_id=$1 and coalesce(cs.last_ts, cs.created_at) >= now() - interval '7 days'",
+        cp = confirmed_personal
+    );
+    let row = sqlx::query(&cohort_sql)
+        .bind(&user.tenant_id)
+        .fetch_one(&pool)
+        .await
+        .ok();
+    let (work, personal, excluded) = match &row {
+        Some(r) => (
+            r.get::<i64, _>("work") as u32,
+            r.get::<i64, _>("personal_confirmed") as u32,
+            r.get::<i64, _>("excluded") as u32,
+        ),
+        None => (0, 0, 0),
+    };
+    let s = ccguard_core::ledger::split(
+        &ccguard_core::ledger::UsageCounts { work, personal_confirmed: personal, unclassified: excluded },
+        allowance.max(0) as u32,
+    );
+
+    // Per-user RAW counts (no per-individual personal-share %), rolling 7 days.
+    let per_user_sql = format!(
+        "select cs.user_email, \
+           count(*) filter (where cs.classification='work') as work, \
+           count(*) filter (where cs.classification='personal' and {cp}) as personal_confirmed, \
+           count(*) filter (where cs.classification='unknown' \
+                or (cs.classification='personal' and not {cp})) as excluded \
+         from captured_sessions cs \
+         left join session_provenance sp on sp.tenant_id=cs.tenant_id and sp.session_id=cs.session_id \
+         left join session_triage st on st.tenant_id=cs.tenant_id and st.session_id=cs.session_id \
+         where cs.tenant_id=$1 and coalesce(cs.last_ts, cs.created_at) >= now() - interval '7 days' \
+         group by cs.user_email order by personal_confirmed desc, work desc",
+        cp = confirmed_personal
+    );
+    let urows = sqlx::query(&per_user_sql)
+        .bind(&user.tenant_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+    page(
+        "Usage",
+        html! {
+            (nav())
+            h1 { "Usage split — personal vs work" }
+            div.card style="background:var(--accent-wash);border-color:var(--accent)" {
+                p {
+                    b { "Observation-only since " (since) "." } " No enforcement rung is armed against anyone. "
+                    "v1 is transparency + a contestable ledger — limiting is not a v1 capability."
+                    @if armed { " " span.badge.high { "ARMED" } }
+                }
+                p style="margin:0" {
+                    small style="color:var(--ink-2)" {
+                        "Split is by " b { "session count" } " over a rolling 7 days — an "
+                        i { "estimated split, not billed dollars" } " (Claude Code's token logs undercount "
+                        "100–174×, so a dollar meter would fire on fiction). UNCLASSIFIED sessions are "
+                        b { "excluded" } " from the split entirely."
+                    }
+                }
+            }
+            div.card {
+                h3 { "Cohort aggregate (reciprocal — the same number every dev sees)" }
+                p {
+                    span.badge.work { "work " (s.work) } " "
+                    span.badge.personal { "personal (confirmed) " (s.personal) } " "
+                    span.badge.unknown { "excluded " (s.unclassified_excluded) }
+                }
+                p {
+                    "Personal share: " b { (s.personal_share_pct) "%" }
+                    " of " (s.denominator) " classified sessions · allowance "
+                    b { (s.allowance_pct) "%" } " · "
+                    @if s.over_allowance {
+                        span.badge.high { "over by " (-s.headroom_pct) "%" }
+                    } @else {
+                        span.badge.work { (s.headroom_pct) "% headroom" }
+                    }
+                }
+                @if s.denominator == 0 {
+                    p.finding { "No classified work/personal sessions in the last 7 days." }
+                }
+            }
+            div.card {
+                h3 { "Per developer (raw counts)" }
+                p { small style="color:var(--ink-3)" {
+                    "Managers see raw counts only — never a per-individual personal-share % — until "
+                    "PERSONAL-class precision clears the contractual floor on a labeled holdout. "
+                    "Unclassified is shown as excluded, never imputed."
+                } }
+                table {
+                    thead { tr { th{"Developer"} th{"Work"} th{"Personal (confirmed)"} th{"Excluded"} } }
+                    tbody {
+                        @for r in &urows {
+                            @let em: String = r.get("user_email");
+                            @let w: i64 = r.get("work");
+                            @let pc: i64 = r.get("personal_confirmed");
+                            @let ex: i64 = r.get("excluded");
+                            tr {
+                                td { (em) }
+                                td { (w) }
+                                td { (pc) }
+                                td { (ex) }
+                            }
+                        }
+                    }
+                }
+            }
+            @if can_edit {
+                div.card {
+                    h3 { "Allowance" }
+                    form method="post" action="/dashboard/usage/config" {
+                        p { "Personal allowance (% of classified " b { "sessions" } ", not spend) " br;
+                            input type="number" name="personal_allowance_pct" min="0" max="100" value=(allowance) style="width:120px"; }
+                        p { button type="submit" { "Save allowance" } }
+                    }
+                }
+            }
+        },
+    )
+}
+
+#[derive(Deserialize)]
+pub struct UsageForm {
+    #[serde(default)]
+    pub personal_allowance_pct: Option<i32>,
+}
+
+/// POST /dashboard/usage/config — owner/admin set the personal allowance %.
+/// `armed` stays false in v1 (transparency only); observation_since is preserved.
+pub async fn usage_config_set(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<UsageForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let pct = f.personal_allowance_pct.unwrap_or(20).clamp(0, 100);
+    sqlx::query(
+        "insert into tenant_limit_config (tenant_id, personal_allowance_pct, armed, observation_since, updated_at) \
+         values ($1,$2,false, now(), now()) \
+         on conflict (tenant_id) do update set \
+           personal_allowance_pct = excluded.personal_allowance_pct, updated_at = now()",
+    )
+    .bind(&user.tenant_id)
+    .bind(pct)
+    .execute(&pool)
+    .await?;
+    Ok(Redirect::to("/dashboard/usage").into_response())
 }

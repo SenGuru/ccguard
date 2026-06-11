@@ -345,6 +345,7 @@ pub fn parse_session(content: &str, fallback_cwd: Option<&str>) -> CapturedSessi
         },
         title,
         cwd,
+        signals: None, // filled by the caller after repo/signal resolution
         events,
     }
 }

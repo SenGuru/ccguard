@@ -3,6 +3,7 @@ pub mod findings;
 pub mod fleet;
 pub mod ingest;
 pub mod ontask;
+pub mod provenance;
 pub mod search;
 pub mod sessions;
 pub mod summary;
