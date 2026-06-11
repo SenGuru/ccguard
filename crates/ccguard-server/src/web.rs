@@ -103,6 +103,7 @@ pub fn nav() -> Markup {
                 a href="/dashboard/triage" { "Triage" }
                 a href="/dashboard/signals" { "Signals" }
                 a href="/dashboard/usage" { "Usage" }
+                a href="/dashboard/enforcement" { "Enforce" }
                 a href="/dashboard/roles" { "Roles" }
             }
         }
@@ -1511,8 +1512,15 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                                 "Enable LLM triage for this org"
                             }
                         }
-                        p { "What counts as work for your org (fed to the judge) " br;
-                            textarea name="work_definition" rows="4" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="e.g. Anything in the acme-corp GitHub org, the internal GitLab, or under C:\\work. Internal tooling and prototypes count as work." { (cfg.work_definition) } }
+                        p { b { "Structured policy (typed predicates — authoritative)" } }
+                        p { "Work git / email domains " br;
+                            input type="text" name="work_domains" value=(cfg.work_domains) style="width:100%" placeholder="acme.com, eng.acme.com, gitlab.acme.com"; }
+                        p { "Work ticket prefixes " br;
+                            input type="text" name="work_ticket_prefixes" value=(cfg.work_ticket_prefixes) style="width:100%" placeholder="ACME, BILL, PLAT"; }
+                        p { "Approved work languages " br;
+                            input type="text" name="approved_langs" value=(cfg.approved_langs) style="width:100%" placeholder="rust, go, typescript"; }
+                        p { "Supplemental note (free text — NOT trusted for instructions) " br;
+                            textarea name="work_definition" rows="3" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="e.g. internal tooling and prototypes count as work." { (cfg.work_definition) } }
                         p { "Judge model " br;
                             input type="text" name="model" value=(cfg.model) style="width:320px"; }
                         p { button type="submit" { "Save triage settings" } }
@@ -1551,9 +1559,20 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                                 }
                                 td { (reason) }
                                 td {
-                                    @if can_edit && !enf {
-                                        form method="post" action={"/dashboard/triage/" (sid) "/confirm"} style="display:inline" {
-                                            button type="submit" style="padding:4px 9px;font-size:12px" { "Confirm" }
+                                    @if can_edit {
+                                        @if !enf {
+                                            form method="post" action={"/dashboard/triage/" (sid) "/confirm"} style="display:inline" {
+                                                button type="submit" style="padding:4px 9px;font-size:12px" { "Confirm" }
+                                            }
+                                            " "
+                                        }
+                                        form method="post" action={"/dashboard/triage/" (sid) "/relabel"} style="display:inline" {
+                                            select name="label" style="padding:3px 6px;font-size:12px" {
+                                                option value="work" { "work" }
+                                                option value="personal" { "personal" }
+                                                option value="unsure" { "unsure" }
+                                            }
+                                            button type="submit" style="padding:4px 9px;font-size:12px;background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "Relabel" }
                                         }
                                     }
                                 }
@@ -1588,6 +1607,12 @@ pub struct TriageConfigForm {
     pub work_definition: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub work_domains: String,
+    #[serde(default)]
+    pub work_ticket_prefixes: String,
+    #[serde(default)]
+    pub approved_langs: String,
 }
 
 /// POST /dashboard/triage/config — owner/admin upsert of the tenant triage config.
@@ -1606,16 +1631,22 @@ pub async fn triage_config_set(
         f.model.trim().to_string()
     };
     sqlx::query(
-        "insert into tenant_triage_config (tenant_id, enabled, work_definition, model, updated_at) \
-         values ($1,$2,$3,$4, now()) \
+        "insert into tenant_triage_config \
+         (tenant_id, enabled, work_definition, model, work_domains, work_ticket_prefixes, approved_langs, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,$7, now()) \
          on conflict (tenant_id) do update set \
            enabled = excluded.enabled, work_definition = excluded.work_definition, \
-           model = excluded.model, updated_at = now()",
+           model = excluded.model, work_domains = excluded.work_domains, \
+           work_ticket_prefixes = excluded.work_ticket_prefixes, \
+           approved_langs = excluded.approved_langs, updated_at = now()",
     )
     .bind(&user.tenant_id)
     .bind(enabled)
     .bind(f.work_definition.trim())
     .bind(&model)
+    .bind(f.work_domains.trim())
+    .bind(f.work_ticket_prefixes.trim())
+    .bind(f.approved_langs.trim())
     .execute(&pool)
     .await?;
     Ok(Redirect::to("/dashboard/triage").into_response())
@@ -1646,7 +1677,8 @@ pub async fn triage_run(user: WebUser, State(pool): State<PgPool>) -> Result<Res
                     b { "Triaged " (summary.attempted) " session(s):" } " "
                     span.badge.work { "work " (summary.work) } " "
                     span.badge.personal { "personal " (summary.personal) } " "
-                    span.badge.unknown { "unsure " (summary.unsure) }
+                    span.badge.unknown { "unsure " (summary.unsure) } " "
+                    span.badge.medium { "abstained " (summary.abstained) }
                 }
             }
             @if !summary.errors.is_empty() {
@@ -1669,8 +1701,11 @@ pub async fn triage_confirm(
     if user.role != "owner" && user.role != "admin" {
         return Err(AppError::Forbidden("owner or admin role required"));
     }
+    // Confirm = the reviewer AGREES with the verdict → it counts for enforcement,
+    // and is recorded as an independent human label equal to the model's label.
     sqlx::query(
-        "update session_triage set enforceable = true, resolved_by = 'human', updated_at = now() \
+        "update session_triage set enforceable = true, resolved_by = 'human', \
+           human_reviewed = true, human_label = label, updated_at = now() \
          where tenant_id = $1 and session_id = $2",
     )
     .bind(&user.tenant_id)
@@ -1678,6 +1713,179 @@ pub async fn triage_confirm(
     .execute(&pool)
     .await?;
     Ok(Redirect::to("/dashboard/triage").into_response())
+}
+
+#[derive(Deserialize)]
+pub struct RelabelForm {
+    pub label: String, // work | personal | unsure
+}
+
+/// POST /dashboard/triage/:session_id/relabel — a reviewer DISAGREES and records
+/// the correct label. This is the independent ground truth that makes the
+/// conformal calibration and the precision gate non-circular. A personal relabel
+/// is enforceable; anything else is visibility-only. Mirrors the human label onto
+/// the session classification. Owner/admin only.
+pub async fn triage_relabel(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(session_id): Path<String>,
+    Form(f): Form<RelabelForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let label = match f.label.as_str() {
+        "work" | "personal" | "unsure" => f.label.as_str(),
+        _ => return Err(AppError::BadRequest("label must be work, personal or unsure")),
+    };
+    // A human-confirmed personal is enforceable; otherwise not.
+    let enforceable = label == "personal";
+    sqlx::query(
+        "update session_triage set human_reviewed = true, human_label = $3, \
+           resolved_by = 'human', enforceable = $4, updated_at = now() \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(&user.tenant_id)
+    .bind(&session_id)
+    .bind(label)
+    .bind(enforceable)
+    .execute(&pool)
+    .await?;
+    // Mirror the human's definite label onto the session (unsure → unclassified).
+    let class = match label {
+        "work" => "work",
+        "personal" => "personal",
+        _ => "unknown",
+    };
+    sqlx::query("update captured_sessions set classification = $3 where tenant_id=$1 and session_id=$2")
+        .bind(&user.tenant_id)
+        .bind(&session_id)
+        .bind(class)
+        .execute(&pool)
+        .await?;
+    Ok(Redirect::to("/dashboard/triage").into_response())
+}
+
+// ---- Enforcement arming (precision GO/NO-GO + conformal threshold) -----------
+
+/// GET /dashboard/enforcement — the build-time precision gate and the conformal
+/// judge threshold. Enforcement can only be armed after the gate reads GO; until
+/// then it is observation-only. This page is the contestable record the dev's own
+/// view reflects ("no rung armed against me").
+pub async fn enforcement_page(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let can_edit = user.role == "owner" || user.role == "admin";
+    let report = crate::handlers::enforcement::load_report(&pool, &user.tenant_id)
+        .await
+        .unwrap_or_else(|_| ccguard_core::precision_gate::evaluate(&[], crate::handlers::enforcement::MIN_LABELS, crate::handlers::enforcement::MAX_FALSE_PERSONAL));
+    let calib = crate::handlers::enforcement::load_calibration(&pool, &user.tenant_id)
+        .await
+        .unwrap_or(ccguard_core::conformal::Calibration { threshold: 1.01, n: 0, alpha: 0.1, usable: false });
+    let arming = crate::handlers::enforcement::load_arming(&pool, &user.tenant_id)
+        .await
+        .unwrap_or(crate::handlers::enforcement::ArmingRow { armed: false, precision_go: false, n_labels: 0, false_personal_upper: 1.0, conformal_threshold: 1.01 });
+    let go = report.decision == ccguard_core::precision_gate::GateDecision::Go;
+
+    page(
+        "Enforcement",
+        html! {
+            (nav())
+            h1 { "Enforcement arming — precision gate" }
+            div.card {
+                p {
+                    "Hard-block lives only in the " b { "off-device proxy" } " (on-device hooks can't reliably "
+                    "block) and may be armed " b { "only" } " after PERSONAL-class precision clears a labeled "
+                    "holdout — because throttling a developer whose session was actually work is the expensive "
+                    "mistake. Until GO, everything is observation-only and nothing is armed."
+                }
+                p {
+                    "The proxy then blocks only the START of a session a structural signal confirms personal "
+                    "(never UNCLASSIFIED, never a single work signal, never a content-only label), only when the "
+                    "seat is over allowance — with a warm, one-click-recoverable message. It "
+                    b { "fails open" } " on any control-plane outage and " b { "fails closed" } " on an untested "
+                    "Claude Code version."
+                }
+            }
+            div.card {
+                h3 { "Precision GO/NO-GO" }
+                p {
+                    "Independent human labels: " b { (report.n) }
+                    " (need ≥ " (crate::handlers::enforcement::MIN_LABELS) ") · "
+                    "PERSONAL precision: " b { (format!("{:.0}%", report.personal_precision * 100.0)) } " · "
+                    "false-personal upper bound: " b { (format!("{:.1}%", report.false_personal_upper_ci * 100.0)) }
+                    " (floor " (format!("{:.0}%", crate::handlers::enforcement::MAX_FALSE_PERSONAL * 100.0)) ")"
+                }
+                p {
+                    "Decision: "
+                    @if go { span.badge.work { "GO" } } @else { span.badge.high { "NO-GO" } }
+                    @if !report.min_labels_met { " — insufficient labeled holdout (relabel verdicts on the Triage page to build it)" }
+                    @else if !report.floor_met { " — false-personal rate above floor" }
+                }
+                h3 style="margin-top:16px" { "Conformal judge threshold" }
+                p {
+                    @if calib.usable {
+                        "The judge abstains below " b { (format!("{:.0}%", calib.threshold.min(1.0) * 100.0)) }
+                        " confidence (fit on " (calib.n) " labels)."
+                        @if calib.threshold > 1.0 { " Currently abstaining on ALL verdicts (no threshold controls the error)." }
+                    } @else {
+                        "Not yet calibrated — need ≥ " (crate::handlers::enforcement::CONFORMAL_MIN_N)
+                        " human labels; until then the judge runs uncalibrated (visibility only)."
+                    }
+                }
+            }
+            div.card style=(if arming.armed { "border-color:#b42318" } else { "" }) {
+                h3 { "Arming status" }
+                p {
+                    "Enforcement is "
+                    @if arming.armed { span.badge.high { "ARMED" } } @else { span.badge.work { "observation-only" } }
+                    "."
+                }
+                @if can_edit {
+                    form method="post" action="/dashboard/enforcement/recompute" style="display:inline" {
+                        button type="submit" style="background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "Recompute gate" }
+                    }
+                    " "
+                    @if arming.armed {
+                        form method="post" action="/dashboard/enforcement/disarm" style="display:inline" {
+                            button type="submit" { "Disarm" }
+                        }
+                    } @else if go {
+                        form method="post" action="/dashboard/enforcement/arm" style="display:inline" {
+                            button type="submit" { "Arm enforcement (GO met)" }
+                        }
+                    } @else {
+                        button disabled style="opacity:.5;cursor:not-allowed" { "Arm — blocked (NO-GO)" }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// POST /dashboard/enforcement/recompute — refresh the gate + calibration.
+pub async fn enforcement_recompute(user: WebUser, State(pool): State<PgPool>) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    let _ = crate::handlers::enforcement::recompute_and_store(&pool, &user.tenant_id).await?;
+    Ok(Redirect::to("/dashboard/enforcement").into_response())
+}
+
+/// POST /dashboard/enforcement/arm — arm only if the gate reads GO.
+pub async fn enforcement_arm(user: WebUser, State(pool): State<PgPool>) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    crate::handlers::enforcement::set_armed(&pool, &user.tenant_id, true).await?;
+    Ok(Redirect::to("/dashboard/enforcement").into_response())
+}
+
+/// POST /dashboard/enforcement/disarm — always allowed.
+pub async fn enforcement_disarm(user: WebUser, State(pool): State<PgPool>) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    crate::handlers::enforcement::set_armed(&pool, &user.tenant_id, false).await?;
+    Ok(Redirect::to("/dashboard/enforcement").into_response())
 }
 
 /// Badge class for a provenance class string (reuse the existing palette).

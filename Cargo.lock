@@ -304,6 +304,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccguard-proxy"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "ccguard-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ccguard-server"
 version = "0.1.0"
 dependencies = [

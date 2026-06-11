@@ -9,10 +9,12 @@
 //! deterministic structural classifier independently agrees. Confirming a verdict
 //! for usage-limiting is a separate, human action (`confirm_triage`).
 
+use ccguard_core::conformal::{self, Calibration, SelectiveDecision};
 use ccguard_core::event::Classification;
-use ccguard_core::triage::{TriageInput, TriageLabel, TriageVerdict};
+use ccguard_core::triage::{StructuredPolicy, TriageInput, TriageLabel, TriageVerdict};
 use sqlx::{PgPool, Row};
 
+use crate::handlers::enforcement;
 use crate::triage_client::{self, TriageClientError};
 
 /// Max prompts / touched-files fed to the judge per session (bounds cost + content).
@@ -25,6 +27,9 @@ pub struct TriageConfig {
     pub enabled: bool,
     pub work_definition: String,
     pub model: String,
+    pub work_domains: String,
+    pub work_ticket_prefixes: String,
+    pub approved_langs: String,
 }
 
 impl Default for TriageConfig {
@@ -33,6 +38,26 @@ impl Default for TriageConfig {
             enabled: false,
             work_definition: String::new(),
             model: ccguard_core::triage::DEFAULT_MODEL.to_string(),
+            work_domains: String::new(),
+            work_ticket_prefixes: String::new(),
+            approved_langs: String::new(),
+        }
+    }
+}
+
+impl TriageConfig {
+    /// The structured (typed-predicate) policy the judge treats as authoritative.
+    pub fn structured_policy(&self) -> StructuredPolicy {
+        let parse = |s: &str| -> Vec<String> {
+            s.split([',', '\n', '\r', ';'])
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        };
+        StructuredPolicy {
+            work_domains: parse(&self.work_domains),
+            work_ticket_prefixes: parse(&self.work_ticket_prefixes),
+            approved_langs: parse(&self.approved_langs),
         }
     }
 }
@@ -40,7 +65,8 @@ impl Default for TriageConfig {
 /// Load (or default) the tenant's triage config.
 pub async fn load_config(pool: &PgPool, tenant_id: &str) -> Result<TriageConfig, sqlx::Error> {
     let row = sqlx::query(
-        "select enabled, work_definition, model from tenant_triage_config where tenant_id = $1",
+        "select enabled, work_definition, model, work_domains, work_ticket_prefixes, approved_langs \
+         from tenant_triage_config where tenant_id = $1",
     )
     .bind(tenant_id)
     .fetch_optional(pool)
@@ -50,6 +76,9 @@ pub async fn load_config(pool: &PgPool, tenant_id: &str) -> Result<TriageConfig,
             enabled: r.get("enabled"),
             work_definition: r.get("work_definition"),
             model: r.get("model"),
+            work_domains: r.get("work_domains"),
+            work_ticket_prefixes: r.get("work_ticket_prefixes"),
+            approved_langs: r.get("approved_langs"),
         },
         None => TriageConfig::default(),
     })
@@ -62,6 +91,9 @@ pub struct RunSummary {
     pub work: usize,
     pub personal: usize,
     pub unsure: usize,
+    /// Verdicts whose confidence fell below the conformal threshold — left
+    /// unclassified for review rather than label-forced.
+    pub abstained: usize,
     pub errors: Vec<String>,
 }
 
@@ -165,15 +197,28 @@ async fn structural_label(
     })
 }
 
-/// Triage one session end-to-end: call Claude, persist the verdict, mirror the
-/// label onto the session. Returns the verdict.
+/// Outcome of triaging one session.
+pub struct TriageOutcome {
+    pub verdict: TriageVerdict,
+    /// True when a definite label was applied (mirrored). False for `unsure` or a
+    /// conformal abstention.
+    pub applied: bool,
+    /// True when the verdict's confidence fell below the conformal threshold.
+    pub abstained: bool,
+}
+
+/// Triage one session end-to-end: call Claude, apply the conformal selective
+/// threshold, persist the verdict, and mirror a definite label onto the session.
+/// A below-threshold verdict ABSTAINS (kept for review, not label-forced).
 pub async fn triage_one(
     pool: &PgPool,
     client: &reqwest::Client,
     tenant_id: &str,
     session_id: &str,
     cfg: &TriageConfig,
-) -> Result<TriageVerdict, TriageError> {
+    policy: &StructuredPolicy,
+    calib: &Calibration,
+) -> Result<TriageOutcome, TriageError> {
     let input = assemble_input(pool, tenant_id, session_id)
         .await?
         .ok_or(TriageError::SessionNotFound)?;
@@ -183,22 +228,33 @@ pub async fn triage_one(
     } else {
         Some(cfg.work_definition.as_str())
     };
-    let verdict = triage_client::classify_session(client, &cfg.model, work_def, &input)
+    let verdict = triage_client::classify_session(client, &cfg.model, policy, work_def, &input)
         .await
         .map_err(TriageError::Client)?;
 
-    // Structural corroboration → enforceability gate.
+    // Conformal selective gate: a below-threshold verdict abstains to review.
+    let abstained = matches!(conformal::decide(verdict.confidence, calib), SelectiveDecision::Abstain)
+        && verdict.label != TriageLabel::Unsure;
+
+    // Structural corroboration → enforceability gate (never enforceable if abstained).
     let structural = structural_label(pool, tenant_id, session_id).await?;
     let llm_class = match verdict.label {
         TriageLabel::Work => Some(Classification::Work),
         TriageLabel::Personal => Some(Classification::Personal),
         TriageLabel::Unsure => None,
     };
-    let enforceable = matches!(
-        (structural, llm_class),
-        (Classification::Work, Some(Classification::Work))
-            | (Classification::Personal, Some(Classification::Personal))
-    );
+    let applied = llm_class.is_some() && !abstained;
+    let enforceable = !abstained
+        && matches!(
+            (structural, llm_class),
+            (Classification::Work, Some(Classification::Work))
+                | (Classification::Personal, Some(Classification::Personal))
+        );
+    let reason = if abstained {
+        format!("{} [abstained: below calibration threshold]", verdict.reason)
+    } else {
+        verdict.reason.clone()
+    };
 
     sqlx::query(
         "insert into session_triage \
@@ -213,28 +269,29 @@ pub async fn triage_one(
     .bind(session_id)
     .bind(verdict.label.as_str())
     .bind(verdict.confidence)
-    .bind(&verdict.reason)
+    .bind(&reason)
     .bind(&cfg.model)
     .bind(structural.as_str())
     .bind(enforceable)
     .execute(pool)
     .await?;
 
-    // Mirror a definite label onto the session so the existing dashboard views
-    // reflect it. `unsure` leaves the session unclassified.
-    if let Some(c) = llm_class {
-        sqlx::query(
-            "update captured_sessions set classification = $3 \
-             where tenant_id = $1 and session_id = $2",
-        )
-        .bind(tenant_id)
-        .bind(session_id)
-        .bind(c.as_str())
-        .execute(pool)
-        .await?;
+    // Mirror a definite label only when applied (not unsure, not abstained).
+    if applied {
+        if let Some(c) = llm_class {
+            sqlx::query(
+                "update captured_sessions set classification = $3 \
+                 where tenant_id = $1 and session_id = $2",
+            )
+            .bind(tenant_id)
+            .bind(session_id)
+            .bind(c.as_str())
+            .execute(pool)
+            .await?;
+        }
     }
 
-    Ok(verdict)
+    Ok(TriageOutcome { verdict, applied, abstained })
 }
 
 /// Sweep: triage up to `limit` currently-UNCLASSIFIED sessions that have no
@@ -266,16 +323,26 @@ pub async fn run_unclassified(
     .fetch_all(pool)
     .await?;
 
+    // Structured policy + the conformal selective threshold, computed once per run.
+    let policy = cfg.structured_policy();
+    let calib = enforcement::load_calibration(pool, tenant_id).await?;
+
     let client = http_client();
     for r in &rows {
         let sid: String = r.get("session_id");
         summary.attempted += 1;
-        match triage_one(pool, &client, tenant_id, &sid, cfg).await {
-            Ok(v) => match v.label {
-                TriageLabel::Work => summary.work += 1,
-                TriageLabel::Personal => summary.personal += 1,
-                TriageLabel::Unsure => summary.unsure += 1,
-            },
+        match triage_one(pool, &client, tenant_id, &sid, cfg, &policy, &calib).await {
+            Ok(o) => {
+                if o.abstained {
+                    summary.abstained += 1;
+                } else {
+                    match o.verdict.label {
+                        TriageLabel::Work => summary.work += 1,
+                        TriageLabel::Personal => summary.personal += 1,
+                        TriageLabel::Unsure => summary.unsure += 1,
+                    }
+                }
+            }
             Err(e) => {
                 if summary.errors.len() < 5 {
                     summary

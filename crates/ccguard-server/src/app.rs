@@ -4,7 +4,8 @@ use axum::Router;
 use sqlx::PgPool;
 
 use crate::handlers::{
-    capture, findings, fleet, ingest, ontask, search, sessions, summary, tenants, timeline, users,
+    capture, enforcement, findings, fleet, ingest, ontask, search, sessions, summary, tenants,
+    timeline, users,
 };
 use crate::web;
 
@@ -45,12 +46,24 @@ pub fn app(pool: PgPool) -> Router {
             post(web::triage_confirm),
         )
         .route(
+            "/dashboard/triage/:session_id/relabel",
+            post(web::triage_relabel),
+        )
+        .route(
             "/dashboard/signals",
             get(web::signals_page),
         )
         .route("/dashboard/signals/config", post(web::signals_config_set))
         .route("/dashboard/usage", get(web::usage_page))
         .route("/dashboard/usage/config", post(web::usage_config_set))
+        .route("/dashboard/enforcement", get(web::enforcement_page))
+        .route("/dashboard/enforcement/recompute", post(web::enforcement_recompute))
+        .route("/dashboard/enforcement/arm", post(web::enforcement_arm))
+        .route("/dashboard/enforcement/disarm", post(web::enforcement_disarm))
+        .route(
+            "/v1/enforcement/decision",
+            get(enforcement::decision_endpoint),
+        )
         .route("/v1/tenants", post(tenants::create_tenant))
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))

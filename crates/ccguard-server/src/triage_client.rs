@@ -57,10 +57,12 @@ fn base_url() -> String {
         .to_string()
 }
 
-/// Classify one session via Claude. `model`/`work_definition` come from tenant config.
+/// Classify one session via Claude. `model`/`policy`/`work_definition` come from
+/// tenant config (the structured policy is authoritative; the note is supplemental).
 pub async fn classify_session(
     client: &reqwest::Client,
     model: &str,
+    policy: &triage::StructuredPolicy,
     work_definition: Option<&str>,
     input: &TriageInput,
 ) -> Result<TriageVerdict, TriageClientError> {
@@ -72,7 +74,7 @@ pub async fn classify_session(
     let body = serde_json::json!({
         "model": model,
         "max_tokens": 256,
-        "system": triage::system_prompt(work_definition),
+        "system": triage::system_prompt(policy, work_definition),
         "messages": [{ "role": "user", "content": triage::user_prompt(input) }],
         "output_config": {
             "format": { "type": "json_schema", "schema": triage::output_schema() }

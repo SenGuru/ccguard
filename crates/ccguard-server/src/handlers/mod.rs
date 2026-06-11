@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod enforcement;
 pub mod findings;
 pub mod fleet;
 pub mod ingest;
