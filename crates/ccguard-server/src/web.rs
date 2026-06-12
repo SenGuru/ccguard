@@ -98,6 +98,7 @@ pub fn nav() -> Markup {
             a.brand href="/dashboard" { (maud::PreEscaped(LOGO_SVG)) "Claresso" }
             div.navlinks {
                 a href="/dashboard" { "Dashboard" }
+                a href="/dashboard/people" { "People" }
                 a href="/dashboard/search" { "Search" }
                 a href="/dashboard/findings" { "Findings" }
                 a href="/dashboard/fleet" { "Fleet" }
@@ -115,21 +116,21 @@ pub fn nav() -> Markup {
 
 const LOGO_SVG: &str = "<svg class=\"logo-mk\" viewBox=\"0 0 64 64\" fill=\"none\"><path d=\"M48.38 20.53 A20 20 0 1 0 48.38 43.47\" stroke=\"currentColor\" stroke-width=\"8\" stroke-linecap=\"round\"/></svg>";
 
-const CSS: &str = ":root{--bg:#0B0F1A;--panel:#0F1729;--panel-2:#0C1424;--panel-3:#111B30;\
---ink:#EAEEF8;--ink-2:#8A97B4;--ink-3:#5C6A8C;--line:#1C2740;--line-2:#16203A;\
---accent:#2F6BFF;--accent-2:#5B87FF;--accent-ink:#5B87FF;--accent-wash:rgba(91,135,255,.10);\
---ok:#3FD99A;--ok-bg:rgba(63,217,154,.13);--warn:#E7B84D;--warn-bg:rgba(231,184,77,.14);\
---bad:#FF8A66;--bad-bg:rgba(255,138,102,.14);--violet:#B68CFF;--violet-bg:rgba(182,140,255,.14)}\
+const CSS: &str = ":root{--bg:#F7F8FB;--panel:#FFFFFF;--panel-2:#F4F6FA;--panel-3:#EDF1F7;\
+--ink:#0F1422;--ink-2:#5A6478;--ink-3:#9099AB;--line:#E7EAF0;--line-2:#EEF1F6;\
+--accent:#2F6BFF;--accent-2:#2F6BFF;--accent-ink:#1E47C8;--accent-wash:#EAF0FF;\
+--ok:#0E9F6E;--ok-bg:#E6F6EE;--warn:#A96A00;--warn-bg:#FEF3DF;\
+--bad:#B42318;--bad-bg:#FDE8E8;--violet:#7A4FB5;--violet-bg:#F1E9FB}\
 *{box-sizing:border-box}\
 body{font:14px/1.55 Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}\
 .wrap{max-width:1180px;margin:0 auto;padding:0 28px 72px}.wrap:has(.topnav){margin:0 0 0 234px;max-width:1180px;padding:26px 44px 84px}\
-h1,h2,h3{font-family:Sora,Inter,sans-serif;font-weight:600;letter-spacing:-.025em;color:#fff}h1{font-size:24px;margin:16px 0 18px}h2{font-size:19px}h3{font-size:16px}\
+h1,h2,h3{font-family:Sora,Inter,sans-serif;font-weight:600;letter-spacing:-.025em;color:var(--ink)}h1{font-size:24px;margin:16px 0 18px}h2{font-size:19px}h3{font-size:16px}\
 a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline}\
 small{color:var(--ink-3)}\
 .topnav{position:fixed;left:0;top:0;bottom:0;z-index:30;width:234px;display:flex;flex-direction:column;gap:3px;padding:22px 16px;border-right:1px solid var(--line);background:var(--panel-2);overflow-y:auto}\
-.brand{display:flex;align-items:center;gap:9px;font-family:Sora;font-weight:600;font-size:18px;color:#fff;letter-spacing:-.03em;text-decoration:none;padding:2px 10px 18px}.brand:hover{text-decoration:none}\
+.brand{display:flex;align-items:center;gap:9px;font-family:Sora;font-weight:600;font-size:18px;color:var(--ink);letter-spacing:-.03em;text-decoration:none;padding:2px 10px 18px}.brand:hover{text-decoration:none}\
 .logo-mk{width:22px;height:22px;color:var(--accent-2);flex:none}\
-.navlinks{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}.navlinks a{display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:13.5px;font-weight:500;text-decoration:none;padding:8px 11px;border-radius:8px}.navlinks a:hover{color:#fff;background:rgba(255,255,255,.045);text-decoration:none}.navlinks a.active{color:#fff;background:var(--accent-wash);box-shadow:inset 2px 0 0 var(--accent-2)}\
+.navlinks{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}.navlinks a{display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:13.5px;font-weight:500;text-decoration:none;padding:8px 11px;border-radius:8px}.navlinks a:hover{color:var(--ink);background:rgba(15,20,34,.045);text-decoration:none}.navlinks a.active{color:var(--accent-ink);background:var(--accent-wash);box-shadow:inset 2px 0 0 var(--accent-2)}\
 table{width:100%;border-collapse:collapse;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}\
 th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);font-size:13px}thead th{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:var(--panel-2)}tr:last-child td{border-bottom:0}tbody tr:hover{background:rgba(91,135,255,.045)}td a{color:var(--accent-2)}\
 .badge{display:inline-block;padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:600;font-family:'JetBrains Mono',monospace}\
@@ -140,10 +141,12 @@ th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);fo
 .k{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-family:'JetBrains Mono',monospace}\
 .user_prompt{border-left-color:#2F6BFF}.assistant_text{border-left-color:#3FD99A}.thinking{border-left-color:#5C6A8C}.tool_call,.bash_command{border-left-color:#E7B84D}.tool_result{border-left-color:#5B87FF}.file_edit{border-left-color:#D05FB0}.pr{border-left-color:#0DB8A0}\
 pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12px/1.55 'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--ink-2)}\
-.card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:13px;padding:20px;margin:14px 0}.card h3{margin-top:0}\
+.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:20px;margin:14px 0;box-shadow:0 1px 2px rgba(16,24,52,.05)}.card h3{margin-top:0}\
 input,select,textarea{font:14px Inter;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)}input::placeholder{color:var(--ink-3)}input:focus,select:focus{outline:none;border-color:var(--accent)}\
 button{font:14px Inter;font-weight:550;padding:9px 16px;border-radius:8px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer}button:hover{background:var(--accent-2)}\
 .err{color:var(--bad)}\
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px;margin:16px 0}.kpi{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px;box-shadow:0 1px 2px rgba(16,24,52,.05)}.kpi .lab{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-family:'JetBrains Mono',monospace}.kpi .big{font-family:Sora;font-weight:700;font-size:24px;margin-top:5px;color:var(--ink)}.kpi .big.az{color:var(--accent-ink)}.kpi .big.gd{color:var(--ok)}.kpi .big.bd{color:var(--bad)}\
+.pagehead{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px}.muted{color:var(--ink-2)}\
 @media(max-width:820px){.topnav{position:static;width:auto;flex-direction:row;align-items:center;gap:12px;overflow-x:auto;padding:10px 16px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0 8px 0 0}.navlinks{flex-direction:row;flex-wrap:nowrap}.navlinks a{padding:6px 9px}.wrap:has(.topnav){margin:0 auto;padding:18px 18px 60px}}";
 
 /// Sign-in form. `err` renders an inline error message when present.
@@ -374,8 +377,8 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
             script { (maud::PreEscaped(format!(
                 "new Chart(document.getElementById('donut'),{{type:'doughnut',\
                  data:{{labels:['work','personal','unknown'],datasets:[{{data:[{work},{personal},{unknown}],\
-                 backgroundColor:['#3FD99A','#FF8A66','#2A3656'],borderColor:'#0F1729',borderWidth:2}}]}},\
-                 options:{{cutout:'66%',plugins:{{legend:{{labels:{{color:'#8A97B4',font:{{family:'Inter'}}}}}}}}}}}});"))) }
+                 backgroundColor:['#16A34A','#D97706','#CBD2E0'],borderColor:'#FFFFFF',borderWidth:2}}]}},\
+                 options:{{cutout:'66%',plugins:{{legend:{{labels:{{color:'#5A6478',font:{{family:'Inter'}}}}}}}}}}}});"))) }
         },
     )
 }
@@ -396,7 +399,7 @@ pub async fn findings(user: WebUser, State(pool): State<PgPool>) -> Html<String>
     page(
         "Findings",
         html! {
-            p { a href="/dashboard" { "← dashboard" } }
+            (nav())
             h1 { "Findings — secrets & PII" }
             p { (rows.len()) " finding(s) (most recent 200)" }
             table {
@@ -559,7 +562,7 @@ pub async fn session_view(
     page(
         "Session",
         html! {
-            p { a href="/dashboard" { "← dashboard" } }
+            (nav())
             h1 {
                 (header)
                 @if on_hold { " " span.badge.high title="ON LEGAL HOLD" { "🔒 ON LEGAL HOLD" } }
@@ -2719,4 +2722,235 @@ pub async fn usage_config_set(
     .execute(&pool)
     .await?;
     Ok(Redirect::to("/dashboard/usage").into_response())
+}
+
+fn yesno(b: Option<bool>) -> &'static str {
+    match b {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "—",
+    }
+}
+
+/// People roster: one row per seat (user_email) with their session split, role,
+/// assignment, and open-flag count. Each links to the per-person detail.
+pub async fn people(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
+    let rows = sqlx::query(
+        "select cs.user_email as em, count(*) as sessions, \
+           count(*) filter (where cs.classification='work') as work, \
+           count(*) filter (where cs.classification='personal') as personal, \
+           count(*) filter (where cs.classification not in ('work','personal')) as other, \
+           coalesce((select count(*) from indicators i \
+             where i.tenant_id=cs.tenant_id and i.user_email=cs.user_email and i.status='open'),0) as flags, \
+           (select job_role from employee_roles r where r.tenant_id=cs.tenant_id and r.user_email=cs.user_email) as role, \
+           (select assignment from employee_roles r where r.tenant_id=cs.tenant_id and r.user_email=cs.user_email) as assignment \
+         from captured_sessions cs where cs.tenant_id=$1 \
+         group by cs.user_email, cs.tenant_id order by sessions desc",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    page(
+        "People",
+        html! {
+            (nav())
+            h1 { "People — usage by person" }
+            p.muted style="margin-bottom:2px" { "One seat per row. Open a person to see every session, device, finding and flag in one place." }
+            table {
+                thead { tr { th{"Person"} th{"Role"} th{"Assigned to"} th{"Sessions"} th{"Work"} th{"Personal"} th{"Other"} th{"Open flags"} } }
+                tbody {
+                    @for r in &rows {
+                        @let em: String = r.get("em");
+                        @let role: Option<String> = r.get("role");
+                        @let asg: Option<String> = r.get("assignment");
+                        @let s: i64 = r.get("sessions");
+                        @let w: i64 = r.get("work");
+                        @let p: i64 = r.get("personal");
+                        @let o: i64 = r.get("other");
+                        @let f: i64 = r.get("flags");
+                        tr {
+                            td { a href={"/dashboard/people/" (em)} { (em) } }
+                            td { (role.unwrap_or_else(|| "—".into())) }
+                            td.muted { (asg.unwrap_or_else(|| "—".into())) }
+                            td { (s) }
+                            td { @if w>0 { span.badge.work { (w) } } @else { "0" } }
+                            td { @if p>0 { span.badge.personal { (p) } } @else { "0" } }
+                            td { (o) }
+                            td { @if f>0 { span.badge.off_task { (f) } } @else { "0" } }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// Per-person detail: everything about one seat in one place — role + assignment,
+/// enrolled device(s) + compliance, session/token/on-task KPIs, recent sessions,
+/// open flags. Keyed by user_email.
+pub async fn person(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Path(email): Path<String>,
+) -> Html<String> {
+    let rl = sqlx::query("select job_role, assignment from employee_roles where tenant_id=$1 and user_email=$2")
+        .bind(&user.tenant_id).bind(&email).fetch_optional(&pool).await.ok().flatten();
+    let role = rl.as_ref().map(|r| r.get::<String, _>("job_role")).unwrap_or_default();
+    let assignment = rl.as_ref().and_then(|r| r.get::<Option<String>, _>("assignment")).unwrap_or_default();
+
+    let agg = sqlx::query(
+        "select count(*) as sessions, count(*) filter (where classification='work') as work, \
+           count(*) filter (where classification='personal') as personal, \
+           count(*) filter (where classification not in ('work','personal')) as other, \
+           coalesce(sum(event_count),0)::bigint as events \
+         from captured_sessions where tenant_id=$1 and user_email=$2")
+        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+    let (sessions, work, personal, other, events) = match &agg {
+        Some(r) => (r.get::<i64, _>("sessions"), r.get::<i64, _>("work"), r.get::<i64, _>("personal"), r.get::<i64, _>("other"), r.get::<i64, _>("events")),
+        None => (0, 0, 0, 0, 0),
+    };
+
+    let tok = sqlx::query(
+        "select coalesce(sum((e.tokens_in+e.tokens_out)) filter (where cs.classification='work'),0)::bigint as work, \
+           coalesce(sum((e.tokens_in+e.tokens_out)) filter (where cs.classification='personal'),0)::bigint as personal, \
+           coalesce(sum(e.tokens_in+e.tokens_out),0)::bigint as total \
+         from captured_events e join captured_sessions cs on cs.tenant_id=e.tenant_id and cs.session_id=e.session_id \
+         where cs.tenant_id=$1 and cs.user_email=$2")
+        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+    let (tw, tp, tt) = match &tok {
+        Some(r) => (r.get::<i64, _>("work"), r.get::<i64, _>("personal"), r.get::<i64, _>("total")),
+        None => (0, 0, 0),
+    };
+
+    let ot = sqlx::query(
+        "select count(*) as scored, count(*) filter (where sc.label='on_task') as ontask \
+         from session_scores sc join captured_sessions cs on cs.tenant_id=sc.tenant_id and cs.session_id=sc.session_id \
+         where cs.tenant_id=$1 and cs.user_email=$2")
+        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+    let (scored, ontask) = match &ot { Some(r) => (r.get::<i64, _>("scored"), r.get::<i64, _>("ontask")), None => (0, 0) };
+    let ontask_pct = if scored > 0 { (ontask as f64 / scored as f64 * 100.0).round() as i64 } else { 0 };
+
+    let findings_n = sqlx::query_scalar::<_, i64>(
+        "select count(*) from findings f join captured_sessions cs on cs.tenant_id=f.tenant_id and cs.session_id=f.session_id \
+         where cs.tenant_id=$1 and cs.user_email=$2")
+        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.unwrap_or(0);
+
+    let devs = sqlx::query(
+        "select device_id, hostname, os, compliance, last_seen, policy_present, login_locked, personal_account \
+         from devices where tenant_id=$1 and user_email=$2 order by last_seen desc nulls last")
+        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+
+    let sess = sqlx::query(
+        "select cs.session_id, cs.title, cs.classification, cs.event_count, sc.label as ontask, st.off_assignment \
+         from captured_sessions cs \
+         left join session_scores sc on sc.tenant_id=cs.tenant_id and sc.session_id=cs.session_id \
+         left join session_triage st on st.tenant_id=cs.tenant_id and st.session_id=cs.session_id \
+         where cs.tenant_id=$1 and cs.user_email=$2 order by cs.last_ts desc nulls last limit 25")
+        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+
+    let inds = sqlx::query(
+        "select kind, detail from indicators where tenant_id=$1 and user_email=$2 and status='open' order by created_at desc limit 30")
+        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+
+    let fmtk = |n: i64| -> String {
+        if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1e6) }
+        else if n >= 1_000 { format!("{:.0}k", n as f64 / 1e3) }
+        else { n.to_string() }
+    };
+
+    page(
+        "Person",
+        html! {
+            (nav())
+            div.pagehead {
+                h1 style="margin-bottom:4px" { (email) }
+                a.muted href="/dashboard/people" { "← all people" }
+            }
+            p.muted style="margin-bottom:8px" {
+                "Role: " b { (if role.is_empty() { "—".to_string() } else { role.clone() }) }
+                "  ·  Assigned to: " b { (if assignment.is_empty() { "—".to_string() } else { assignment.clone() }) }
+                "  ·  " a href="/dashboard/roles" { "edit" }
+            }
+            div.kpis {
+                div.kpi { div.lab{"Sessions"} div.big{ (sessions) } }
+                div.kpi { div.lab{"Work"} div.big.gd{ (work) } }
+                div.kpi { div.lab{"Personal"} div.big.bd{ (personal) } }
+                div.kpi { div.lab{"Other"} div.big{ (other) } }
+                div.kpi { div.lab{"On-task"} div.big.az{ (ontask_pct) "%" } }
+                div.kpi { div.lab{"Findings"} div.big{ (findings_n) } }
+                div.kpi { div.lab{"Events"} div.big{ (fmtk(events)) } }
+            }
+            div.kpis {
+                div.kpi { div.lab{"Tokens · total"} div.big{ (fmtk(tt)) } }
+                div.kpi { div.lab{"Tokens · work"} div.big.gd{ (fmtk(tw)) } }
+                div.kpi { div.lab{"Tokens · personal"} div.big.bd{ (fmtk(tp)) } }
+            }
+            div.card {
+                h3 { "Device(s)" }
+                @if devs.is_empty() {
+                    p.muted { "No enrolled device reporting for this seat yet." }
+                } @else {
+                    table {
+                        thead { tr { th{"Hostname"} th{"OS"} th{"Compliance"} th{"Policy"} th{"Login lock"} th{"Personal acct"} th{"Last seen"} } }
+                        tbody {
+                            @for d in &devs {
+                                @let host: Option<String> = d.get("hostname");
+                                @let os: Option<String> = d.get("os");
+                                @let comp: Option<String> = d.get("compliance");
+                                @let pol: Option<bool> = d.get("policy_present");
+                                @let lock: Option<bool> = d.get("login_locked");
+                                @let pers: Option<bool> = d.get("personal_account");
+                                @let ls: Option<chrono::DateTime<Utc>> = d.get("last_seen");
+                                @let c = comp.clone().unwrap_or_else(|| "unknown".into());
+                                tr {
+                                    td { (host.unwrap_or_else(|| "—".into())) }
+                                    td { (os.unwrap_or_else(|| "—".into())) }
+                                    td { span.badge.(c) { (c) } }
+                                    td { (yesno(pol)) }
+                                    td { (yesno(lock)) }
+                                    td { (yesno(pers)) }
+                                    td.muted { (ls.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "—".into())) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            h3 style="margin-top:22px" { "Recent sessions" }
+            table {
+                thead { tr { th{"Session"} th{"Class"} th{"On-task"} th{"Events"} } }
+                tbody {
+                    @for r in &sess {
+                        @let sid: String = r.get("session_id");
+                        @let title: Option<String> = r.get("title");
+                        @let class: Option<String> = r.get("classification");
+                        @let otl: Option<String> = r.get("ontask");
+                        @let offa: Option<bool> = r.get("off_assignment");
+                        @let cl = class.unwrap_or_else(|| "unknown".into());
+                        tr {
+                            td { a href={"/dashboard/sessions/" (sid)} { (title.unwrap_or_else(|| sid.chars().take(8).collect::<String>())) } }
+                            td { span.badge.(cl.clone()) { (cl) } @if offa == Some(true) { " " span.badge.off_assignment { "off-assignment" } } }
+                            td { @if let Some(l) = otl { span.badge.(l.clone()) { (l) } } @else { "—" } }
+                            td { (r.get::<i32, _>("event_count")) }
+                        }
+                    }
+                }
+            }
+            @if !inds.is_empty() {
+                h3 style="margin-top:22px" { "Open flags" }
+                table {
+                    thead { tr { th{"Kind"} th{"Detail"} } }
+                    tbody {
+                        @for i in &inds {
+                            @let k: String = i.get("kind");
+                            @let det: String = i.get("detail");
+                            tr { td { span.badge.(k.clone()) { (k.replace('_', " ")) } } td.muted { (det) } }
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
