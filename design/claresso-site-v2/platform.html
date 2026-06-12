@@ -1,0 +1,83 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claresso — Platform</title>
+<link rel="icon" href="../brand/claresso-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="sub.css">
+</head><body>
+<nav><div class="wrap navin">
+ <a class="brand" href="index.html"><svg class="mk" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</a>
+ <div class="nl"><a class="on" href="platform.html">Platform</a><a href="security.html">Security</a><a href="pricing.html">Pricing</a><a href="#">Docs</a></div>
+ <div class="nr"><a class="signin" href="#">Sign in</a><a class="btn btn-p" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="hero">
+ <svg class="ap" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+ <div class="glow"></div>
+ <div class="wrap">
+  <div class="eyebrow">The platform</div>
+  <h1 class="sora">Everything you need to govern AI coding — in one platform.</h1>
+  <p>Capture every session verbatim, investigate what's sensitive, enforce policy across the fleet, and prove it stayed on-task — the whole lifecycle of company-provided AI coding, in one place.</p>
+  <div class="cta"><a class="btn btn-p" href="#">Book a demo</a><a class="btn btn-g" href="index.html">Back to overview</a></div>
+ </div>
+</header>
+
+<div class="wrap">
+ <section class="row">
+  <div class="copy"><div class="eyebrow">Capture</div><h2 class="sora">A complete, replayable record of every session.</h2><p class="lead">Claresso reconstructs each AI-coding session in full and replays it event by event — the prompt, the response, every tool call, and every file diff, exactly as they happened. Even with vendor telemetry off.</p></div>
+  <div class="art">
+   <div class="artrow"><span class="mono">user · prompt</span><span class="tag az">captured</span></div>
+   <div class="artrow"><span class="mono">assistant · response</span><span class="tag az">captured</span></div>
+   <div class="artrow"><span class="mono">tool · bash → git commit</span><span class="tag ok">on-task 88</span></div>
+   <div class="artrow"><span class="mono">file_edit · deploy.rs</span><span class="tag az">diff stored</span></div>
+   <div class="artrow"><span class="mono">pr · #214 opened</span><span class="tag ok">shipped</span></div>
+  </div>
+ </section>
+ <section class="row flip">
+  <div class="copy"><div class="eyebrow">Investigate</div><h2 class="sora">Search everything. Surface what's sensitive.</h2><p class="lead">Run full-text search across the entire captured corpus, let Claresso flag secrets and PII automatically, and hand counsel a defensible export when they ask. Only a redacted preview is ever stored.</p></div>
+  <div class="art">
+   <div class="artrow"><span class="mono">secret · aws_access_key</span><span class="tag bad">redacted</span></div>
+   <div class="artrow"><span class="mono">pii · email</span><span class="tag bad">redacted</span></div>
+   <div class="artrow"><span class="mono">search "deploy key" · 41 hits</span><span class="tag az">indexed</span></div>
+   <div class="artrow"><span class="mono">legal hold · case-7</span><span class="tag warn">held</span></div>
+   <div class="artrow"><span class="mono">export · NDJSON</span><span class="tag ok">ready</span></div>
+  </div>
+ </section>
+ <section class="row">
+  <div class="copy"><div class="eyebrow">Enforce</div><h2 class="sora">Push policy. Prove every endpoint obeys it.</h2><p class="lead">Ship a managed policy through your MDM that forces the agent on and locks logins to your org — then watch every endpoint continuously attest it's intact. Drift and tampering surface the moment they happen.</p></div>
+  <div class="art">
+   <div class="artrow"><span class="mono">WS-ENG-07 · policy intact</span><span class="tag ok">compliant</span></div>
+   <div class="artrow"><span class="mono">WS-MKT-02 · config changed</span><span class="tag warn">drifted</span></div>
+   <div class="artrow"><span class="mono">LAPTOP-14 · unmanaged</span><span class="tag bad">tampered</span></div>
+   <div class="artrow"><span class="mono">fleet · 216 / 218</span><span class="tag ok">attested</span></div>
+  </div>
+ </section>
+ <section class="row flip">
+  <div class="copy"><div class="eyebrow">Score</div><h2 class="sora">Know it's on-task — judged on what shipped.</h2><p class="lead">Claresso scores each session on the signals that matter to the business — did work land in a commit, survive to a merged PR, map to a ticket — not keystrokes. An AI judge classifies work vs personal against your own description, and per-person assignment surfaces off-assignment work. Role-aware anomalies route to a review queue for a human, not a punishment.</p></div>
+  <div class="art">
+   <div class="artrow"><span class="mono">ana@acme · billing → PR #214</span><span class="tag ok">work</span></div>
+   <div class="artrow"><span class="mono">lee@acme · marketing-site</span><span class="tag warn">off-assignment</span></div>
+   <div class="artrow"><span class="mono">sam@acme · side project</span><span class="tag bad">personal</span></div>
+   <div class="artrow"><span class="mono">on-task this week</span><span class="tag az">86%</span></div>
+  </div>
+ </section>
+
+ <div class="band">
+  <svg class="ap" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <h2 class="sora">See the whole platform on your own fleet.</h2>
+  <p>Stand up Claresso against your own Claude Code fleet and watch capture, findings, enforcement, and on-task come together. No agent rewrites, no developer friction.</p>
+  <div class="cta"><a class="btn btn-p" href="#">Book a demo</a><a class="btn btn-g" href="pricing.html">See pricing</a></div>
+ </div>
+</div>
+
+<footer class="wrap">
+ <div class="footgrid">
+  <div class="footbrand"><div class="brand"><svg class="mk" style="width:20px;height:20px" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</div><p>Clarity over the code your AI writes. Governance for company-provided AI coding tools.</p></div>
+  <div class="col"><h5>Product</h5><a href="platform.html">Platform</a><a href="security.html">Security</a><a href="pricing.html">Pricing</a></div>
+  <div class="col"><h5>Company</h5><a href="#">About</a><a href="#">Careers</a><a href="#">Contact</a></div>
+  <div class="col"><h5>Resources</h5><a href="#">Docs</a><a href="#">Blog</a><a href="#">Status</a></div>
+  <div class="col"><h5>Legal</h5><a href="#">Privacy</a><a href="#">Terms</a><a href="#">DPA</a></div>
+ </div>
+ <div class="footbot"><div>© 2026 Claresso</div><div>Made for the people accountable for AI risk.</div></div>
+</footer>
+</body></html>

@@ -1,0 +1,83 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claresso — Security</title>
+<link rel="icon" href="../brand/claresso-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="sub.css">
+</head><body>
+<nav><div class="wrap navin">
+ <a class="brand" href="index.html"><svg class="mk" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</a>
+ <div class="nl"><a href="platform.html">Platform</a><a class="on" href="security.html">Security</a><a href="pricing.html">Pricing</a><a href="#">Docs</a></div>
+ <div class="nr"><a class="signin" href="#">Sign in</a><a class="btn btn-p" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="hero">
+ <svg class="ap" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+ <div class="glow"></div>
+ <div class="wrap">
+  <div class="eyebrow">Security &amp; trust</div>
+  <h1 class="sora">Built to be defensible.</h1>
+  <p>Claresso monitors company-provided tooling on company-managed machines, using the enterprise controls Anthropic already ships — visible, auditable, and built for the people accountable for risk.</p>
+  <div class="cta"><a class="btn btn-p" href="#">Talk to our security team</a><a class="btn btn-g" href="index.html">Back to overview</a></div>
+ </div>
+</header>
+
+<div class="wrap">
+ <section class="sec">
+  <div class="sec-head ctr"><div class="eyebrow">The category</div><h2 class="sora">Legitimate governance — not surveillance.</h2><p>This is the same category as Google Vault, Microsoft 365 Purview eDiscovery, and GitHub audit logs: monitoring the company-owned tooling the company pays for and provides — not general workforce surveillance. Claresso governs one thing — the AI coding tools your organization issues — and it does it in the open.</p></div>
+ </section>
+
+ <section class="sec">
+  <div class="sec-head ctr"><div class="eyebrow">Principles</div><h2 class="sora">What Claresso never does.</h2></div>
+  <div class="grid2">
+   <div class="card"><div class="ix"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Visible, non-covert agent</h3><p>Employees can see it's running. The install is named and discoverable; monitoring is disclosed in your policy, never hidden. No keylogging, no biometrics — ever.</p></div>
+   <div class="card"><div class="ix"><svg viewBox="0 0 24 24"><path d="M4 4h16v6H4z"/><path d="M4 14h10v6H4z"/></svg></div><h3>Metadata-default, content as a tier</h3><p>Start with usage metadata. Full-content capture is a deliberate, policy-gated tier — turned on knowingly, not by default.</p></div>
+   <div class="card"><div class="ix"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></div><h3>Secrets &amp; PII redacted at capture</h3><p>Findings store a redacted preview only — the raw secret never lands in the index. Detection happens the moment content is captured.</p></div>
+   <div class="card"><div class="ix"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg></div><h3>The console audits itself</h3><p>Every admin action in Claresso is itself logged. Reviewers don't get a back door; they get an accountable, self-audited record.</p></div>
+  </div>
+ </section>
+
+ <section class="sec">
+  <div class="grid2">
+   <div>
+    <div class="eyebrow">Your data, on your terms</div>
+    <h2 class="sora" style="font-size:30px;margin-top:12px">A clean, auditable data path.</h2>
+    <div style="margin-top:18px">
+     <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>SSO, SCIM &amp; RBAC</b><span>Okta / Entra SSO, SCIM provisioning, and role-based access control.</span></div></div>
+     <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Self-hosted option</b><span>Run Claresso entirely inside your own cloud. Your data never leaves your tenancy.</span></div></div>
+     <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Works telemetry-off</b><span>The endpoint record is reconstructed from disk — no blind spot to explain.</span></div></div>
+     <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Custom retention &amp; audit streaming</b><span>Set retention windows and stream the audit log to your SIEM.</span></div></div>
+    </div>
+   </div>
+   <div>
+    <div class="eyebrow">The hard "never" lines</div>
+    <h2 class="sora" style="font-size:30px;margin-top:12px">Things we will not build.</h2>
+    <div style="margin-top:18px">
+     <div class="li"><span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><div><b>No covert-by-default capture</b><span>If it isn't disclosed and discoverable, we don't ship it.</span></div></div>
+     <div class="li"><span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><div><b>No keystroke dynamics or biometrics</b><span>No webcam, no voiceprint, no typing-cadence profiling.</span></div></div>
+     <div class="li"><span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><div><b>No emotion inference</b><span>A hard line under the EU AI Act and our own principles.</span></div></div>
+     <div class="li"><span class="x"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><div><b>No personal-account capture</b><span>Claresso governs company-issued tooling only — not personal accounts.</span></div></div>
+    </div>
+   </div>
+  </div>
+ </section>
+
+ <div class="band">
+  <svg class="ap" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <h2 class="sora">Bring your security team into the conversation.</h2>
+  <p>Walk your CISO, IT, and compliance leads through exactly how Claresso captures, stores, and governs the data — line by line.</p>
+  <div class="cta"><a class="btn btn-p" href="#">Talk to our security team</a><a class="btn btn-g" href="platform.html">See the platform</a></div>
+ </div>
+</div>
+
+<footer class="wrap">
+ <div class="footgrid">
+  <div class="footbrand"><div class="brand"><svg class="mk" style="width:20px;height:20px" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</div><p>Clarity over the code your AI writes. Governance for company-provided AI coding tools.</p></div>
+  <div class="col"><h5>Product</h5><a href="platform.html">Platform</a><a href="security.html">Security</a><a href="pricing.html">Pricing</a></div>
+  <div class="col"><h5>Company</h5><a href="#">About</a><a href="#">Careers</a><a href="#">Contact</a></div>
+  <div class="col"><h5>Resources</h5><a href="#">Docs</a><a href="#">Blog</a><a href="#">Status</a></div>
+  <div class="col"><h5>Legal</h5><a href="#">Privacy</a><a href="#">Terms</a><a href="#">DPA</a></div>
+ </div>
+ <div class="footbot"><div>© 2026 Claresso</div><div>Made for the people accountable for AI risk.</div></div>
+</footer>
+</body></html>
