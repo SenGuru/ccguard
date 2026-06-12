@@ -1511,26 +1511,36 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
             }
             @if can_edit {
                 div.card {
-                    h3 { "Configuration" }
+                    h3 { "Your business — what the AI judges against" }
+                    p { small style="color:var(--ink-3)" { "Plain English. This is the classifier: the AI reads each session against your description. Be concrete about what your work looks like in code." } }
                     form method="post" action="/dashboard/triage/config" {
                         p {
                             label {
                                 input type="checkbox" name="enabled" value="on" checked[cfg.enabled] style="width:auto;margin-right:8px";
-                                "Enable LLM triage for this org"
+                                "Enable AI classification for this org"
                             }
                         }
-                        p { b { "Structured policy (typed predicates — authoritative)" } }
+                        p { "What does your business do, and what does its real work look like in code? " br;
+                            textarea name="business_desc" rows="4" style="width:100%" placeholder="e.g. We're a 3-person Shopify agency. Our work is building and maintaining client storefronts, custom theme code, and Shopify apps — often starting brand-new repos for new clients." { (cfg.business_desc) } }
+                        p { "What is Claude Code allowed to be used for? " br;
+                            textarea name="work_allowed" rows="3" style="width:100%" placeholder="e.g. Any client project, our internal tools and scripts, and learning/spikes for client work. NOT personal side-projects, job applications, or hobby code." { (cfg.work_allowed) } }
+                        p { "(Optional) What is NOT your work? — examples only, never a hard rule " br;
+                            textarea name="personal_examples" rows="2" style="width:100%" placeholder="e.g. a personal game, a portfolio site, leetcode practice" { (cfg.personal_examples) } }
+                        details {
+                            summary style="cursor:pointer;color:var(--ink-2)" { "Advanced — typed predicates (optional, authoritative)" }
+                            p style="margin-top:8px" { b { "Structured policy (typed predicates — authoritative)" } }
                         p { "Work git / email domains " br;
                             input type="text" name="work_domains" value=(cfg.work_domains) style="width:100%" placeholder="acme.com, eng.acme.com, gitlab.acme.com"; }
                         p { "Work ticket prefixes " br;
                             input type="text" name="work_ticket_prefixes" value=(cfg.work_ticket_prefixes) style="width:100%" placeholder="ACME, BILL, PLAT"; }
                         p { "Approved work languages " br;
                             input type="text" name="approved_langs" value=(cfg.approved_langs) style="width:100%" placeholder="rust, go, typescript"; }
-                        p { "Supplemental note (free text — NOT trusted for instructions) " br;
-                            textarea name="work_definition" rows="3" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="e.g. internal tooling and prototypes count as work." { (cfg.work_definition) } }
+                            p { "Supplemental note (free text — NOT trusted for instructions) " br;
+                                textarea name="work_definition" rows="3" style="width:100%;font:13px 'JetBrains Mono',monospace" placeholder="e.g. internal tooling and prototypes count as work." { (cfg.work_definition) } }
+                        }
                         p { "Judge model " br;
                             input type="text" name="model" value=(cfg.model) style="width:320px"; }
-                        p { button type="submit" { "Save triage settings" } }
+                        p { button type="submit" { "Save business description" } }
                     }
                 }
             }
@@ -1620,9 +1630,17 @@ pub struct TriageConfigForm {
     pub work_ticket_prefixes: String,
     #[serde(default)]
     pub approved_langs: String,
+    #[serde(default)]
+    pub business_desc: String,
+    #[serde(default)]
+    pub work_allowed: String,
+    #[serde(default)]
+    pub personal_examples: String,
 }
 
-/// POST /dashboard/triage/config — owner/admin upsert of the tenant triage config.
+/// POST /dashboard/triage/config — owner/admin upsert of the business-description
+/// policy. Bumps `policy_version` (verdicts/labels bind to the policy that produced
+/// them) and re-enqueues the most recent sessions to re-drain under the new policy.
 pub async fn triage_config_set(
     user: WebUser,
     State(pool): State<PgPool>,
@@ -1639,13 +1657,16 @@ pub async fn triage_config_set(
     };
     sqlx::query(
         "insert into tenant_triage_config \
-         (tenant_id, enabled, work_definition, model, work_domains, work_ticket_prefixes, approved_langs, updated_at) \
-         values ($1,$2,$3,$4,$5,$6,$7, now()) \
+         (tenant_id, enabled, work_definition, model, work_domains, work_ticket_prefixes, \
+          approved_langs, business_desc, work_allowed, personal_examples, policy_version, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1, now()) \
          on conflict (tenant_id) do update set \
            enabled = excluded.enabled, work_definition = excluded.work_definition, \
            model = excluded.model, work_domains = excluded.work_domains, \
            work_ticket_prefixes = excluded.work_ticket_prefixes, \
-           approved_langs = excluded.approved_langs, updated_at = now()",
+           approved_langs = excluded.approved_langs, business_desc = excluded.business_desc, \
+           work_allowed = excluded.work_allowed, personal_examples = excluded.personal_examples, \
+           policy_version = tenant_triage_config.policy_version + 1, updated_at = now()",
     )
     .bind(&user.tenant_id)
     .bind(enabled)
@@ -1654,8 +1675,33 @@ pub async fn triage_config_set(
     .bind(f.work_domains.trim())
     .bind(f.work_ticket_prefixes.trim())
     .bind(f.approved_langs.trim())
+    .bind(f.business_desc.trim())
+    .bind(f.work_allowed.trim())
+    .bind(f.personal_examples.trim())
     .execute(&pool)
     .await?;
+
+    // Re-classify under the new policy: reset the most recent <=30 sessions to
+    // 'pending' (bounded — never re-bills full history) so they re-drain.
+    sqlx::query(
+        "update captured_sessions set classification='pending' \
+         where tenant_id=$1 and session_id in ( \
+            select session_id from captured_sessions \
+            where tenant_id=$1 and classification in ('work','personal','unknown') \
+            order by last_ts desc nulls last limit 30)",
+    )
+    .bind(&user.tenant_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "update session_triage set next_retry_at = now() where tenant_id=$1 \
+         and session_id in (select session_id from captured_sessions \
+            where tenant_id=$1 and classification='pending')",
+    )
+    .bind(&user.tenant_id)
+    .execute(&pool)
+    .await?;
+
     Ok(Redirect::to("/dashboard/triage").into_response())
 }
 

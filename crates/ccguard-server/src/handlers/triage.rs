@@ -31,11 +31,19 @@ const MAX_TARGETS: i64 = 20;
 #[derive(Debug, Clone)]
 pub struct TriageConfig {
     pub enabled: bool,
+    /// Legacy free-text note (kept for back-compat / as a supplement).
     pub work_definition: String,
     pub model: String,
     pub work_domains: String,
     pub work_ticket_prefixes: String,
     pub approved_langs: String,
+    /// "What the business does and what its work looks like in code."
+    pub business_desc: String,
+    /// "What Claude Code is allowed to be used for."
+    pub work_allowed: String,
+    /// Optional "what is NOT this business's work" — contrast examples only.
+    pub personal_examples: String,
+    pub policy_version: i32,
 }
 
 impl Default for TriageConfig {
@@ -47,6 +55,10 @@ impl Default for TriageConfig {
             work_domains: String::new(),
             work_ticket_prefixes: String::new(),
             approved_langs: String::new(),
+            business_desc: String::new(),
+            work_allowed: String::new(),
+            personal_examples: String::new(),
+            policy_version: 1,
         }
     }
 }
@@ -66,12 +78,31 @@ impl TriageConfig {
             approved_langs: parse(&self.approved_langs),
         }
     }
+
+    /// The composed work-definition the judge reasons over: the admin's two
+    /// plain-English fields (+ contrast examples), falling back to the legacy
+    /// free-text note when the new fields are empty. `None` when nothing is set.
+    pub fn work_def(&self) -> Option<String> {
+        let composed = ccguard_core::triage::compose_work_definition(
+            &self.business_desc,
+            &self.work_allowed,
+            &self.personal_examples,
+        );
+        if !composed.trim().is_empty() {
+            Some(composed)
+        } else if !self.work_definition.trim().is_empty() {
+            Some(self.work_definition.clone())
+        } else {
+            None
+        }
+    }
 }
 
 /// Load (or default) the tenant's triage config.
 pub async fn load_config(pool: &PgPool, tenant_id: &str) -> Result<TriageConfig, sqlx::Error> {
     let row = sqlx::query(
-        "select enabled, work_definition, model, work_domains, work_ticket_prefixes, approved_langs \
+        "select enabled, work_definition, model, work_domains, work_ticket_prefixes, approved_langs, \
+                business_desc, work_allowed, personal_examples, policy_version \
          from tenant_triage_config where tenant_id = $1",
     )
     .bind(tenant_id)
@@ -85,6 +116,10 @@ pub async fn load_config(pool: &PgPool, tenant_id: &str) -> Result<TriageConfig,
             work_domains: r.get("work_domains"),
             work_ticket_prefixes: r.get("work_ticket_prefixes"),
             approved_langs: r.get("approved_langs"),
+            business_desc: r.get("business_desc"),
+            work_allowed: r.get("work_allowed"),
+            personal_examples: r.get("personal_examples"),
+            policy_version: r.get("policy_version"),
         },
         None => TriageConfig::default(),
     })
@@ -229,14 +264,11 @@ pub async fn triage_one(
         .await?
         .ok_or(TriageError::SessionNotFound)?;
 
-    let work_def = if cfg.work_definition.trim().is_empty() {
-        None
-    } else {
-        Some(cfg.work_definition.as_str())
-    };
-    let verdict = triage_client::classify_session(client, &cfg.model, policy, work_def, &input)
-        .await
-        .map_err(TriageError::Client)?;
+    let wd = cfg.work_def();
+    let verdict =
+        triage_client::classify_session(client, &cfg.model, policy, wd.as_deref(), &input)
+            .await
+            .map_err(TriageError::Client)?;
 
     Ok(apply_verdict(pool, tenant_id, session_id, &verdict, &cfg.model, calib, None).await?)
 }
@@ -533,11 +565,8 @@ pub async fn pending_endpoint(
 ) -> Result<Json<Vec<PendingItem>>, AppError> {
     let cfg = load_config(&pool, &tenant).await?;
     let policy = cfg.structured_policy();
-    let work_def = if cfg.work_definition.trim().is_empty() {
-        None
-    } else {
-        Some(cfg.work_definition.as_str())
-    };
+    let wd = cfg.work_def();
+    let work_def = wd.as_deref();
     let limit = q.limit.unwrap_or(25).clamp(1, 100);
 
     let rows = sqlx::query(
@@ -604,10 +633,14 @@ pub async fn verdict_endpoint(
     if let Some(posted) = b.input_digest.as_deref() {
         let cfg = load_config(&pool, &tenant).await?;
         let policy = cfg.structured_policy();
-        let work_def = (!cfg.work_definition.trim().is_empty()).then_some(cfg.work_definition.as_str());
+        let wd = cfg.work_def();
         let current = match assemble_input(&pool, &tenant, &b.session_id).await? {
             Some(input) => {
-                let prompt = format!("{}\n\n{}", triage::system_prompt(&policy, work_def), triage::user_prompt(&input));
+                let prompt = format!(
+                    "{}\n\n{}",
+                    triage::system_prompt(&policy, wd.as_deref()),
+                    triage::user_prompt(&input)
+                );
                 Some(input_digest(&prompt))
             }
             None => None,
