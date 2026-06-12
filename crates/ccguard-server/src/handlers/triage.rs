@@ -448,10 +448,20 @@ async fn gather_evidence(
         .await?;
 
         let lexicon = ccguard_core::lexicon::distinctive_terms(&docs, &background, LEXICON_TERMS);
+        // Bound each prompt to the same 400-char window the corpus docs use before
+        // tokenizing — a big session can have multi-MB prompts, and term_hits +
+        // nearest_work each tokenize this whole blob, so the raw join made the
+        // lexicon step take seconds. The distinctive terms live in the head anyway.
+        let sample: String = input
+            .prompts
+            .iter()
+            .map(|p| p.chars().take(400).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ");
         let this_doc = format!(
             "{} {} {}",
             input.title.as_deref().unwrap_or(""),
-            input.prompts.join(" "),
+            sample,
             input.tool_targets.join(" ")
         );
         input.work_term_hits = ccguard_core::lexicon::term_hits(&this_doc, &lexicon);
