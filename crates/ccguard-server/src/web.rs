@@ -2412,6 +2412,84 @@ pub async fn usage_page(user: WebUser, State(pool): State<PgPool>) -> Html<Strin
     .flatten();
     let allowance: i32 = cfg.as_ref().map(|r| r.get("personal_allowance_pct")).unwrap_or(20);
     let armed: bool = cfg.as_ref().map(|r| r.get("armed")).unwrap_or(false);
+    // Admin's optional weekly token budget (their figure, not a scraped limit).
+    let weekly_budget: i64 = sqlx::query_scalar::<_, Option<i64>>(
+        "select weekly_token_budget from tenant_limit_config where tenant_id = $1",
+    )
+    .bind(&user.tenant_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .unwrap_or(0);
+
+    // Measured-token split (work/personal/unknown) over the rolling 7 days. Tokens
+    // come straight from the transcripts (tokens_in+tokens_out per event); summed by
+    // the session's class. A second lens beside the session-count ledger — labeled
+    // "measured tokens", never dollars and never the opaque account limit.
+    let tok_rows = sqlx::query(
+        "select coalesce(cs.classification,'unknown') as class, \
+                coalesce(sum(e.tokens_in + e.tokens_out),0)::bigint as toks \
+         from captured_sessions cs \
+         join captured_events e on e.tenant_id=cs.tenant_id and e.session_id=cs.session_id \
+         where cs.tenant_id=$1 and coalesce(cs.last_ts, cs.created_at) >= now() - interval '7 days' \
+         group by coalesce(cs.classification,'unknown')",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let mut tok_work: i64 = 0;
+    let mut tok_personal: i64 = 0;
+    let mut tok_unknown: i64 = 0;
+    for r in &tok_rows {
+        let c: String = r.get("class");
+        let t: i64 = r.get("toks");
+        match c.as_str() {
+            "work" => tok_work = t,
+            "personal" => tok_personal = t,
+            _ => tok_unknown += t,
+        }
+    }
+    let tok_total = tok_work + tok_personal + tok_unknown;
+    let pct = |n: i64| -> i64 {
+        if tok_total > 0 {
+            (n as f64 / tok_total as f64 * 100.0).round() as i64
+        } else {
+            0
+        }
+    };
+    let budget_used_pct: i64 = if weekly_budget > 0 {
+        (tok_total as f64 / weekly_budget as f64 * 100.0).round() as i64
+    } else {
+        0
+    };
+
+    // Per-user token totals (work vs personal), rolling 7 days.
+    let tok_user_rows = sqlx::query(
+        "select cs.user_email, \
+           coalesce(sum((e.tokens_in+e.tokens_out)) filter (where cs.classification='work'),0)::bigint as work, \
+           coalesce(sum((e.tokens_in+e.tokens_out)) filter (where cs.classification='personal'),0)::bigint as personal, \
+           coalesce(sum((e.tokens_in+e.tokens_out)) filter (where coalesce(cs.classification,'unknown') not in ('work','personal')),0)::bigint as other \
+         from captured_sessions cs \
+         join captured_events e on e.tenant_id=cs.tenant_id and e.session_id=cs.session_id \
+         where cs.tenant_id=$1 and coalesce(cs.last_ts, cs.created_at) >= now() - interval '7 days' \
+         group by cs.user_email order by (coalesce(sum(e.tokens_in+e.tokens_out),0)) desc",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let fmt_k = |n: i64| -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.0)
+        } else if n >= 1_000 {
+            format!("{:.0}k", n as f64 / 1_000.0)
+        } else {
+            n.to_string()
+        }
+    };
     let since = cfg
         .as_ref()
         .map(|r| r.get::<chrono::DateTime<Utc>, _>("observation_since"))
@@ -2513,6 +2591,50 @@ pub async fn usage_page(user: WebUser, State(pool): State<PgPool>) -> Html<Strin
                 }
             }
             div.card {
+                h3 { "Measured tokens — work vs personal (7d)" }
+                p { small style="color:var(--ink-3)" {
+                    "A second lens: actual tokens from the transcripts (input+output), summed by "
+                    "the session's class. This is " i { "measured token volume" } ", not dollars and "
+                    "not a % of your account's limit (that limit isn't cleanly readable, and these "
+                    "tokens aren't the unit it counts in). Cache tokens aren't included."
+                } }
+                p {
+                    span.badge.work { "work " (fmt_k(tok_work)) " (" (pct(tok_work)) "%)" } " "
+                    span.badge.personal { "personal " (fmt_k(tok_personal)) " (" (pct(tok_personal)) "%)" } " "
+                    span.badge.unknown { "unclassified " (fmt_k(tok_unknown)) " (" (pct(tok_unknown)) "%)" }
+                }
+                p { "Total measured this week: " b { (fmt_k(tok_total)) } " tokens"
+                    @if weekly_budget > 0 {
+                        " · against your set budget of " b { (fmt_k(weekly_budget)) } " → "
+                        @if budget_used_pct >= 100 {
+                            span.badge.high { (budget_used_pct) "% used" }
+                        } @else {
+                            span.badge.work { (budget_used_pct) "% used" }
+                        }
+                    }
+                }
+                @if tok_total == 0 {
+                    p.finding { "No token-bearing events in the last 7 days." }
+                }
+                table {
+                    thead { tr { th{"Developer"} th{"Work"} th{"Personal"} th{"Other"} } }
+                    tbody {
+                        @for r in &tok_user_rows {
+                            @let em: String = r.get("user_email");
+                            @let w: i64 = r.get("work");
+                            @let p: i64 = r.get("personal");
+                            @let o: i64 = r.get("other");
+                            tr {
+                                td { (em) }
+                                td { (fmt_k(w)) }
+                                td { (fmt_k(p)) }
+                                td { (fmt_k(o)) }
+                            }
+                        }
+                    }
+                }
+            }
+            div.card {
                 h3 { "Per developer (raw counts)" }
                 p { small style="color:var(--ink-3)" {
                     "Managers see raw counts only — never a per-individual personal-share % — until "
@@ -2539,11 +2661,14 @@ pub async fn usage_page(user: WebUser, State(pool): State<PgPool>) -> Html<Strin
             }
             @if can_edit {
                 div.card {
-                    h3 { "Allowance" }
+                    h3 { "Settings" }
                     form method="post" action="/dashboard/usage/config" {
                         p { "Personal allowance (% of classified " b { "sessions" } ", not spend) " br;
                             input type="number" name="personal_allowance_pct" min="0" max="100" value=(allowance) style="width:120px"; }
-                        p { button type="submit" { "Save allowance" } }
+                        p { "Weekly token budget (your plan's rough weekly allowance — 0 to hide) " br;
+                            input type="number" name="weekly_token_budget" min="0" value=(weekly_budget) style="width:200px";
+                            " " small style="color:var(--ink-3)" { "your figure, not a scraped limit" } }
+                        p { button type="submit" { "Save" } }
                     }
                 }
             }
@@ -2555,10 +2680,13 @@ pub async fn usage_page(user: WebUser, State(pool): State<PgPool>) -> Html<Strin
 pub struct UsageForm {
     #[serde(default)]
     pub personal_allowance_pct: Option<i32>,
+    #[serde(default)]
+    pub weekly_token_budget: Option<i64>,
 }
 
-/// POST /dashboard/usage/config — owner/admin set the personal allowance %.
-/// `armed` stays false in v1 (transparency only); observation_since is preserved.
+/// POST /dashboard/usage/config — owner/admin set the personal allowance % and the
+/// optional weekly token budget. `armed` stays false in v1 (transparency only);
+/// observation_since is preserved.
 pub async fn usage_config_set(
     user: WebUser,
     State(pool): State<PgPool>,
@@ -2568,14 +2696,17 @@ pub async fn usage_config_set(
         return Err(AppError::Forbidden("owner or admin role required"));
     }
     let pct = f.personal_allowance_pct.unwrap_or(20).clamp(0, 100);
+    let budget = f.weekly_token_budget.unwrap_or(0).max(0);
     sqlx::query(
-        "insert into tenant_limit_config (tenant_id, personal_allowance_pct, armed, observation_since, updated_at) \
-         values ($1,$2,false, now(), now()) \
+        "insert into tenant_limit_config (tenant_id, personal_allowance_pct, weekly_token_budget, armed, observation_since, updated_at) \
+         values ($1,$2,$3,false, now(), now()) \
          on conflict (tenant_id) do update set \
-           personal_allowance_pct = excluded.personal_allowance_pct, updated_at = now()",
+           personal_allowance_pct = excluded.personal_allowance_pct, \
+           weekly_token_budget = excluded.weekly_token_budget, updated_at = now()",
     )
     .bind(&user.tenant_id)
     .bind(pct)
+    .bind(budget)
     .execute(&pool)
     .await?;
     Ok(Redirect::to("/dashboard/usage").into_response())

@@ -1008,7 +1008,14 @@ async fn roles_page_shows_forms_and_post_role_lists_it(pool: PgPool) {
     // Owner sees both forms.
     let (status, html) = get_html(&pool, "/dashboard/roles", &token).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Job roles"), "roles page must show the job-roles form");
+    assert!(
+        html.contains("role &amp; assignment") || html.contains("role & assignment"),
+        "roles page must show the people role/assignment form"
+    );
+    assert!(
+        html.contains("Assigned to"),
+        "roles page must show the assignment field"
+    );
     assert!(
         html.contains("Per-repo work definitions"),
         "roles page must show the per-repo work-definition form"
@@ -1035,6 +1042,25 @@ async fn roles_page_shows_forms_and_post_role_lists_it(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("x@acme"), "the assigned email must be listed");
     assert!(html.contains("marketer"), "the assigned role must be listed");
+
+    // POST with an assignment -> it round-trips into the table.
+    let resp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/dashboard/roles")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("ccg_session={token}"))
+                .body(Body::from(
+                    "kind=role&user_email=y@acme&job_role=engineer&assignment=Grove+engine",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let (_s, html) = get_html(&pool, "/dashboard/roles", &token).await;
+    assert!(html.contains("Grove engine"), "the assignment text must be listed");
 }
 
 /// The review queue is gated by the WebUser cookie — no cookie -> /login.
