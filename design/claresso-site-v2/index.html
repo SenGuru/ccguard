@@ -1,0 +1,379 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claresso — bring your AI coding into focus</title>
+<link rel="icon" href="../brand/claresso-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+ --night:#0B0F1A;--night-2:#0F1729;--night-3:#0C1424;
+ --ink:#EAEEF8;--ink-2:#8A97B4;--ink-3:#5C6A8C;
+ --azure:#5B87FF;--azure-core:#2F6BFF;--azure-deep:#1E47C8;
+ --line:#1C2740;--line-2:#16203A;
+ --ok:#3FD99A;--warn:#E7B84D;--bad:#FF8A66;
+}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+body{font-family:Inter,system-ui,sans-serif;background:var(--night);color:var(--ink);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.sora{font-family:Sora,sans-serif;letter-spacing:-.03em}
+.mono{font-family:'JetBrains Mono',monospace}
+h1,h2,h3{font-family:Sora,sans-serif;font-weight:600;letter-spacing:-.03em;margin:0;text-wrap:balance}
+p{margin:0;text-wrap:pretty}a{text-decoration:none;color:inherit}
+.wrap{max-width:1200px;margin:0 auto;padding:0 40px;position:relative;z-index:2}
+.btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 22px;border-radius:9px;font-weight:550;font-size:14.5px;cursor:pointer;transition:.15s;border:1px solid transparent}
+.btn-p{background:var(--azure-core);color:#fff}.btn-p:hover{background:var(--azure-deep)}
+.btn-g{border-color:var(--line);color:var(--ink);background:rgba(255,255,255,.02)}.btn-g:hover{border-color:#2c3a5c}
+.eyebrow{font-size:12.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--azure)}
+
+/* nav */
+nav{position:sticky;top:0;z-index:40;background:rgba(11,15,26,.72);backdrop-filter:saturate(1.3) blur(12px);border-bottom:1px solid var(--line)}
+.navin{display:flex;align-items:center;gap:38px;height:70px}
+.brand{display:flex;align-items:center;gap:9px;font-family:Sora;font-weight:600;font-size:19px;letter-spacing:-.03em;color:#fff}
+.mk{width:23px;height:23px;color:var(--azure);flex:none}
+.nl{display:flex;gap:28px;margin-left:6px}.nl a{color:var(--ink-2);font-size:14px;font-weight:500}.nl a:hover{color:#fff}
+.nr{margin-left:auto;display:flex;align-items:center;gap:20px}
+.signin{color:var(--ink);font-size:14px;font-weight:500}
+
+/* hero — aperture frames the headline */
+.hero{position:relative;text-align:center;padding:110px 0 96px}
+.aperture{position:absolute;left:50%;top:34px;transform:translateX(-50%);width:720px;height:720px;z-index:0;pointer-events:none;
+ color:var(--azure);opacity:.4;filter:drop-shadow(0 0 50px rgba(91,135,255,.35))}
+.glow{position:absolute;left:50%;top:150px;width:820px;height:520px;transform:translateX(-50%);z-index:0;pointer-events:none;
+ background:radial-gradient(44% 50% at 50% 44%,rgba(91,135,255,.26),rgba(47,107,255,.07) 56%,transparent 72%);filter:blur(10px)}
+.grid-bg{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.5;
+ background-image:linear-gradient(var(--line-2) 1px,transparent 1px),linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+ background-size:64px 64px;mask-image:radial-gradient(60% 50% at 50% 30%,#000,transparent 75%)}
+.tag{position:relative;z-index:3;display:inline-flex;align-items:center;gap:9px;height:32px;padding:0 15px;border-radius:99px;border:1px solid var(--line);background:rgba(91,135,255,.07);color:var(--azure);font-size:12.5px;font-weight:550}
+.tag .d{width:6px;height:6px;border-radius:50%;background:var(--azure);box-shadow:0 0 10px var(--azure)}
+h1.title{position:relative;z-index:3;font-size:68px;line-height:1.03;margin:26px auto 0;max-width:15ch;color:#fff;text-shadow:0 2px 40px rgba(11,15,26,.9)}
+h1.title .em{background:linear-gradient(180deg,#fff,var(--azure));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.sub{position:relative;z-index:3;font-size:18.5px;color:var(--ink-2);max-width:58ch;margin:24px auto 0;line-height:1.55}
+.cta{position:relative;z-index:3;display:flex;gap:13px;justify-content:center;margin-top:34px}
+.micro{position:relative;z-index:3;margin-top:18px;color:var(--ink-3);font-size:12.5px}
+
+/* trust strip */
+.strip{position:relative;z-index:2;margin-top:60px;text-align:center}
+.strip .lab{color:var(--ink-3);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+.logos{display:flex;flex-wrap:wrap;gap:14px 42px;justify-content:center;align-items:center;margin-top:20px}
+.logos span{font-family:Sora;font-weight:500;font-size:16px;color:#5d6a8c;letter-spacing:-.01em}
+
+/* section scaffolding */
+section{position:relative;z-index:2}
+.sec-head{max-width:60ch}.sec-head.ctr{margin:0 auto;text-align:center}
+.sec-head h2{font-size:40px;line-height:1.1;margin:13px 0 0;color:#fff}
+.sec-head p{color:var(--ink-2);font-size:18px;margin-top:15px}
+.sec-head.ctr p{margin-left:auto;margin-right:auto;max-width:62ch}
+
+/* features — dark panels, hairline, aperture accent (not soft cards) */
+.feat{padding:104px 0 0}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:48px}
+.panel{position:relative;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,var(--night-2),var(--night-3));padding:28px 26px;overflow:hidden}
+.panel:hover{border-color:#2a3a5e}
+.panel .ix{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);background:rgba(91,135,255,.08);display:grid;place-items:center;margin-bottom:18px}
+.panel .ix svg{width:20px;height:20px;stroke:var(--azure);fill:none;stroke-width:1.7}
+.panel h3{font-size:19px;color:#fff;margin-bottom:9px}
+.panel p{color:var(--ink-2);font-size:14.5px;line-height:1.55}
+.panel .more{display:inline-block;margin-top:15px;color:var(--azure);font-size:13.5px;font-weight:600}
+.panel .corner{position:absolute;right:-30px;top:-30px;width:120px;height:120px;color:var(--azure);opacity:.06}
+
+/* product showcase — the live console on dark */
+.show{padding:104px 0 0}
+.console{margin-top:46px;background:var(--night-3);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 50px 100px -50px rgba(0,0,0,.7)}
+.cbar{display:flex;align-items:center;gap:10px;height:46px;padding:0 18px;border-bottom:1px solid var(--line)}
+.cbar i{width:11px;height:11px;border-radius:50%;background:#243355;display:block}
+.cbar .ti{margin-left:8px;font-family:'JetBrains Mono';font-size:12.5px;color:var(--ink-3)}
+.cbar .live{margin-left:auto;display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono';font-size:11.5px;color:var(--azure)}
+.cbar .live .d{width:6px;height:6px;border-radius:50%;background:var(--azure);box-shadow:0 0 8px var(--azure)}
+.cbody{padding:20px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.cell{background:var(--night-2);border:1px solid var(--line);border-radius:10px;padding:15px 16px}
+.cell .lab{font-family:'JetBrains Mono';font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+.cell .big{font-family:Sora;font-weight:700;font-size:27px;color:#fff;margin-top:6px}
+.cell .big.az{color:var(--azure)}.cell .sub{font-size:11px;color:var(--ink-3);margin-top:3px}
+.feed{grid-column:span 4;background:var(--night-2);border:1px solid var(--line);border-radius:10px;padding:4px 0;margin-top:0}
+.fr{display:grid;grid-template-columns:96px 1fr auto;gap:12px;align-items:center;padding:11px 18px;border-bottom:1px solid var(--line-2)}
+.fr:last-child{border-bottom:0}
+.fr .tm{font-family:'JetBrains Mono';font-size:11.5px;color:var(--ink-3)}
+.fr .tx{font-size:13.5px;color:#c4cfe6}.fr .tx b{color:#fff;font-weight:600}
+.pill{font-family:'JetBrains Mono';font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:6px}
+.pill.work{background:rgba(63,217,154,.14);color:var(--ok)}.pill.flag{background:rgba(255,138,102,.16);color:var(--bad)}.pill.off{background:rgba(231,184,77,.16);color:var(--warn)}
+
+/* split — on-task */
+.split{display:grid;grid-template-columns:1.02fr .98fr;gap:56px;align-items:center;padding:108px 0 0}
+.split h2{font-size:36px;line-height:1.12;color:#fff}
+.split .lead{color:var(--ink-2);font-size:17px;margin-top:17px}
+.list{margin-top:28px;display:flex;flex-direction:column;gap:18px}
+.li{display:flex;gap:13px}
+.li .ck{width:23px;height:23px;border-radius:7px;background:rgba(91,135,255,.12);display:grid;place-items:center;flex:none;margin-top:1px}
+.li .ck svg{width:13px;height:13px;stroke:var(--azure);fill:none;stroke-width:2.4}
+.li b{font-weight:600;font-size:15px;color:#fff}.li span{display:block;color:var(--ink-2);font-size:14px;margin-top:3px}
+.donut{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--night-2),var(--night-3));padding:30px}
+.donut .top{display:flex;align-items:center;gap:24px}
+.ring-wrap{width:128px;height:128px;flex:none;position:relative}
+.ring-wrap .pct{position:absolute;inset:0;display:grid;place-items:center;font-family:Sora;font-weight:700;font-size:26px;color:#fff}
+.legend{display:flex;flex-direction:column;gap:9px}
+.lg{display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink-2)}
+.lg .sw{width:11px;height:11px;border-radius:3px;flex:none}.lg b{color:#fff;font-weight:600;font-family:'JetBrains Mono';font-size:13px}
+.donut .rows{margin-top:22px;border-top:1px solid var(--line-2);padding-top:16px;display:flex;flex-direction:column;gap:10px}
+.dr{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--ink-2)}
+.dr .pill2{font-family:'JetBrains Mono';font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:5px;background:rgba(231,184,77,.16);color:var(--warn)}
+
+/* how it works */
+.how{padding:108px 0 0}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
+.step .n{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:rgba(91,135,255,.08);color:var(--azure);font-family:Sora;font-weight:700;display:grid;place-items:center;font-size:15px;margin-bottom:15px}
+.step h3{font-size:18px;color:#fff;margin-bottom:8px}.step p{color:var(--ink-2);font-size:14.5px;line-height:1.55}
+.codeblock{margin-top:42px;background:#080C16;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.cb-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.cb-bar i{width:11px;height:11px;border-radius:50%;background:#1d2740;display:block}
+.cb-bar span{font-family:'JetBrains Mono';font-size:12px;color:var(--ink-3);margin-left:6px}
+.codeblock pre{margin:0;padding:20px 24px;font-family:'JetBrains Mono';font-size:13px;line-height:1.8;color:#aebbd6;overflow-x:auto}
+.c-cmt{color:#566488}.c-key{color:var(--azure)}.c-str{color:#7fe2a6}.c-ok{color:var(--ok)}
+
+/* security */
+.secband{padding:108px 0 0}
+.secgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 28px;margin-top:34px}
+.secitem{display:flex;gap:13px;align-items:flex-start;border:1px solid var(--line);border-radius:12px;background:var(--night-2);padding:18px 20px}
+.secitem .ck{width:26px;height:26px;border-radius:8px;background:rgba(91,135,255,.12);display:grid;place-items:center;flex:none}
+.secitem .ck svg{width:14px;height:14px;stroke:var(--azure);fill:none;stroke-width:2.3}
+.secitem b{font-size:14.5px;color:#fff}.secitem span{display:block;color:var(--ink-2);font-size:13.5px;margin-top:3px;line-height:1.5}
+
+/* pricing */
+.pricing{padding:108px 0 0}
+.tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:50px;align-items:start}
+.tier{border:1px solid var(--line);border-radius:16px;padding:30px 28px;background:linear-gradient(180deg,var(--night-2),var(--night-3));display:flex;flex-direction:column}
+.tier.hi{border-color:var(--azure-core);box-shadow:0 30px 70px -36px rgba(47,107,255,.5);position:relative}
+.tier .ribbon{position:absolute;top:-11px;left:28px;background:var(--azure-core);color:#fff;font-size:11px;font-weight:600;padding:3px 11px;border-radius:7px}
+.tier .tn{font-family:Sora;font-weight:600;font-size:18px;color:#fff}
+.tier .tdesc{color:var(--ink-2);font-size:13.5px;margin-top:7px;min-height:40px}
+.tier .price{font-family:Sora;font-weight:700;font-size:36px;color:#fff;margin:16px 0 2px}
+.tier .price small{font-size:14px;color:var(--ink-3);font-weight:500}
+.tier .btn{margin-top:20px;justify-content:center;width:100%}
+.tier ul{list-style:none;padding:0;margin:22px 0 0;display:flex;flex-direction:column;gap:12px}
+.tier li{display:flex;gap:10px;font-size:13.5px;color:var(--ink-2)}
+.tier li svg{width:14px;height:14px;stroke:var(--azure);fill:none;stroke-width:2.4;flex:none;margin-top:3px}
+
+/* CTA band */
+.band{margin:108px 0 0;border:1px solid var(--line);border-radius:22px;background:radial-gradient(80% 140% at 50% 0%,rgba(47,107,255,.16),transparent 60%),var(--night-2);text-align:center;padding:70px 24px;position:relative;overflow:hidden}
+.band .ap{position:absolute;left:50%;top:-160px;transform:translateX(-50%);width:380px;height:380px;color:var(--azure);opacity:.16;pointer-events:none}
+.band h2{font-size:40px;color:#fff;position:relative}
+.band p{color:var(--ink-2);font-size:18px;margin:15px auto 0;max-width:54ch;position:relative}
+.band .cta{margin-top:30px}
+
+/* footer */
+footer{margin-top:96px;border-top:1px solid var(--line);padding:56px 0 40px}
+.footgrid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:30px}
+.footbrand .brand{font-size:18px}
+.footbrand p{color:var(--ink-3);font-size:13px;margin-top:14px;max-width:30ch;line-height:1.55}
+.col h5{font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:2px 0 13px;font-family:Inter}
+.col a{display:block;color:var(--ink-2);font-size:13.5px;margin-bottom:10px}.col a:hover{color:#fff}
+.footbot{display:flex;justify-content:space-between;align-items:center;margin-top:44px;padding-top:24px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13px}
+
+@media(max-width:900px){
+ h1.title{font-size:44px}.aperture{width:460px;height:460px}
+ .grid3,.steps,.tiers{grid-template-columns:1fr}.split{grid-template-columns:1fr;gap:36px}
+ .cbody{grid-template-columns:1fr 1fr}.feed{grid-column:span 2}
+ .secgrid{grid-template-columns:1fr}.footgrid{grid-template-columns:1fr 1fr}.nl{display:none}
+ .wrap{padding:0 24px}
+}
+</style></head><body>
+
+<nav><div class="wrap navin">
+ <a class="brand" href="index.html"><svg class="mk" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</a>
+ <div class="nl"><a href="#platform">Platform</a><a href="#security">Security</a><a href="#pricing">Pricing</a><a href="#">Docs</a></div>
+ <div class="nr"><a class="signin" href="#">Sign in</a><a class="btn btn-p" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="hero">
+ <div class="grid-bg"></div>
+ <svg class="aperture" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+ <div class="glow"></div>
+ <div class="wrap">
+  <span class="tag"><span class="d"></span>Governance for company-provided AI coding</span>
+  <h1 class="title sora">Bring your AI coding<br>into <span class="em">focus.</span></h1>
+  <p class="sub">Your team ships with Claude Code. Claresso gives you the other half — a complete, searchable record of everything prompted, generated, and shipped, with the controls to keep it on-policy and the proof it stayed on-task.</p>
+  <div class="cta"><a class="btn btn-p" href="#">Book a demo</a><a class="btn btn-g" href="#">Watch the 2-min tour</a></div>
+  <p class="micro">Deploys in an afternoon · works telemetry-off · SSO &amp; SCIM</p>
+ </div>
+ <div class="strip wrap">
+  <div class="lab">Works with the tools your engineers already use</div>
+  <div class="logos"><span>Claude Code</span><span>GitHub</span><span>Okta SSO</span><span>Jira</span><span>Intune MDM</span><span>Splunk</span></div>
+ </div>
+</header>
+
+<section class="feat wrap" id="platform">
+ <div class="sec-head ctr">
+  <div class="eyebrow">One platform, the whole lifecycle</div>
+  <h2>Capture it. Investigate it. Enforce it.</h2>
+  <p>Claresso turns AI-assisted engineering from a blind spot into a system of record your security, compliance, and engineering leaders can act on.</p>
+ </div>
+ <div class="grid3">
+  <div class="panel">
+   <svg class="corner" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+   <div class="ix"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+   <h3>Total visibility</h3>
+   <p>Every prompt, response, tool call, and file diff — captured verbatim and replayable, session by session. Works even with vendor telemetry off.</p>
+   <a class="more" href="#">Session replay →</a>
+  </div>
+  <div class="panel">
+   <svg class="corner" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+   <div class="ix"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+   <h3>Enforcement that holds</h3>
+   <p>Push a managed policy that forces the agent on, locks logins to your org, and blocks personal accounts — then attest every endpoint stays compliant.</p>
+   <a class="more" href="#">Fleet &amp; policy →</a>
+  </div>
+  <div class="panel">
+   <svg class="corner" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+   <div class="ix"><svg viewBox="0 0 24 24"><path d="M4 4h16v6H4z"/><path d="M4 14h10v6H4z"/><path d="M18 14v6M21 17h-6"/></svg></div>
+   <h3>Defensible eDiscovery</h3>
+   <p>Full-text search across everything, automatic secret &amp; PII findings, legal hold, and one-click export of the complete record for audit or counsel.</p>
+   <a class="more" href="#">Search &amp; export →</a>
+  </div>
+ </div>
+</section>
+
+<section class="show wrap">
+ <div class="sec-head ctr">
+  <div class="eyebrow">See it work</div>
+  <h2>One console over every session.</h2>
+ </div>
+ <div class="console">
+  <div class="cbar"><i></i><i></i><i></i><span class="ti">claresso — acme.inc</span><span class="live"><span class="d"></span>live</span></div>
+  <div class="cbody">
+   <div class="cell"><div class="lab">Sessions / 7d</div><div class="big">1,284</div><div class="sub">216 devices</div></div>
+   <div class="cell"><div class="lab">On-task</div><div class="big az">86%</div><div class="sub">+4 vs last wk</div></div>
+   <div class="cell"><div class="lab">Open findings</div><div class="big">7</div><div class="sub">3 secrets · 4 pii</div></div>
+   <div class="cell"><div class="lab">Fleet</div><div class="big">216<span style="font-size:15px;color:var(--ink-3)">/218</span></div><div class="sub">2 drifted</div></div>
+   <div class="feed">
+    <div class="fr"><span class="tm">09:41:12</span><span class="tx"><b>dana@acme</b> · deploy-script-help</span><span class="pill work">work</span></div>
+    <div class="fr"><span class="tm">09:40:58</span><span class="tx"><b>sam@acme</b> · pasted aws_access_key in a prompt</span><span class="pill flag">finding</span></div>
+    <div class="fr"><span class="tm">09:39:30</span><span class="tx"><b>lee@acme</b> · marketing-site redesign (assigned: billing)</span><span class="pill off">off-assignment</span></div>
+    <div class="fr"><span class="tm">09:38:02</span><span class="tx"><b>ana@acme</b> · billing retries → PR #214</span><span class="pill work">work</span></div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<section class="split wrap">
+ <div>
+  <div class="eyebrow">On-task, not over-the-shoulder</div>
+  <h2>Know it's on-task — without reading anyone's screen.</h2>
+  <p class="lead">Claresso scores each session on signals that matter to the business: did work land in a commit, survive to a merged PR, map to a ticket? Role-aware anomalies surface for review — not punishment.</p>
+  <div class="list">
+   <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Work vs. personal, defined by you</b><span>An AI judge reads each session against your plain-English business description — so "looks unrelated but is related" is handled.</span></div></div>
+   <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Per-person assignment &amp; off-assignment</b><span>Tell Claresso what each person is working on; company work that isn't their lane surfaces as a flag — distinct from personal.</span></div></div>
+   <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Aggregate-first, never covert</b><span>The agent is visible, the record is auditable, and Claresso console actions are themselves logged.</span></div></div>
+  </div>
+ </div>
+ <div class="donut">
+  <div class="top">
+   <div class="ring-wrap">
+    <svg viewBox="0 0 36 36" style="width:100%;height:100%;transform:rotate(-90deg)">
+     <circle cx="18" cy="18" r="15.5" fill="none" stroke="#1C2740" stroke-width="5"/>
+     <circle cx="18" cy="18" r="15.5" fill="none" stroke="#2F6BFF" stroke-width="5" stroke-linecap="round" stroke-dasharray="83.7 97.4"/>
+    </svg>
+    <div class="pct">86%</div>
+   </div>
+   <div class="legend">
+    <div class="lg"><span class="sw" style="background:#2F6BFF"></span>Work <b>1,104</b></div>
+    <div class="lg"><span class="sw" style="background:#E7B84D"></span>Off-assignment <b>96</b></div>
+    <div class="lg"><span class="sw" style="background:#FF8A66"></span>Personal <b>84</b></div>
+    <div class="lg"><span class="sw" style="background:#2a3656"></span>Unclassified <b>—</b></div>
+   </div>
+  </div>
+  <div class="rows">
+   <div class="dr"><span>lee@acme · marketing-site redesign</span><span class="pill2">off-assignment</span></div>
+   <div class="dr"><span>sam@acme · personal side project</span><span class="pill2" style="background:rgba(255,138,102,.16);color:#FF8A66">personal</span></div>
+   <div class="dr"><span>ana@acme · billing retries → PR #214</span><span class="pill2" style="background:rgba(63,217,154,.14);color:#3FD99A">work</span></div>
+  </div>
+ </div>
+</section>
+
+<section class="how wrap">
+ <div class="sec-head ctr">
+  <div class="eyebrow">Up and running in an afternoon</div>
+  <h2>Deploy it through your MDM. No developer friction.</h2>
+ </div>
+ <div class="steps">
+  <div class="step"><div class="n">1</div><h3>Push the policy</h3><p>Generate your managed-settings.json from the console and ship it via Intune, Jamf, or your MDM. It's the highest-precedence config — users can't override it.</p></div>
+  <div class="step"><div class="n">2</div><h3>Endpoints enroll &amp; attest</h3><p>A lightweight, visible agent captures the full record and continuously attests the policy is intact. Drift and tampering surface the moment they happen.</p></div>
+  <div class="step"><div class="n">3</div><h3>Investigate &amp; prove</h3><p>Search everything, work the findings and on-task review queue, place legal holds, and export the complete record whenever security, audit, or counsel asks.</p></div>
+ </div>
+ <div class="codeblock">
+  <div class="cb-bar"><i></i><i></i><i></i><span>generate &amp; deploy the managed policy</span></div>
+  <pre><span class="c-cmt"># generate the Claude Code managed-settings.json for your org</span>
+$ claresso <span class="c-key">gen-policy</span> --org-uuid <span class="c-str">org-acme-7f3</span> --otel <span class="c-str">https://otel.acme.com</span> &gt; managed-settings.json
+
+<span class="c-cmt"># ship via MDM → endpoints enroll and attest automatically</span>
+$ claresso <span class="c-key">fleet</span> --status
+  <span class="c-ok">✓</span> 216 / 218 devices compliant   <span class="c-cmt">·  2 drifted  ·  0 tampered</span></pre>
+ </div>
+</section>
+
+<section class="secband wrap" id="security">
+ <div class="sec-head">
+  <div class="eyebrow">Built to be defensible</div>
+  <h2>Legitimate governance — not surveillance.</h2>
+  <p>Claresso monitors company-provided tooling on company-managed machines, using the enterprise controls Anthropic already ships. Visible, auditable, and built for the people accountable for risk.</p>
+ </div>
+ <div class="secgrid">
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Visible, non-covert agent</b><span>Employees can see it's running. No hidden capture, no keylogging, no biometrics — ever.</span></div></div>
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Metadata-default, content as a tier</b><span>Start with usage metadata; turn on full-content capture deliberately, per policy.</span></div></div>
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>SSO, SCIM &amp; audit log</b><span>Okta / Entra SSO, SCIM provisioning, role-based access, and a self-audited console.</span></div></div>
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Self-hosted option</b><span>Run Claresso entirely inside your own cloud. Your data never leaves your tenancy.</span></div></div>
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Secrets &amp; PII redacted</b><span>Findings store a redacted preview only — the raw secret never lands in the index.</span></div></div>
+  <div class="secitem"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Works telemetry-off</b><span>The endpoint record is reconstructed from disk, so there's no blind spot to explain.</span></div></div>
+ </div>
+</section>
+
+<section class="pricing wrap" id="pricing">
+ <div class="sec-head ctr">
+  <div class="eyebrow">Pricing</div>
+  <h2>Start with visibility. Scale into control.</h2>
+  <p>Per-seat, billed annually. Every plan deploys in an afternoon with no developer friction.</p>
+ </div>
+ <div class="tiers">
+  <div class="tier">
+   <div class="tn">Team</div><div class="tdesc">Visibility for a single team getting started with AI coding.</div>
+   <div class="price">$12 <small>/ seat / mo</small></div>
+   <a class="btn btn-g" href="#">Start free trial</a>
+   <ul><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Full session capture &amp; replay</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Secret &amp; PII findings</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Full-text search</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Up to 25 seats</li></ul>
+  </div>
+  <div class="tier hi">
+   <span class="ribbon">Most popular</span>
+   <div class="tn">Business</div><div class="tdesc">Full visibility, enforcement, and on-task scoring across the org.</div>
+   <div class="price">$29 <small>/ seat / mo</small></div>
+   <a class="btn btn-p" href="#">Book a demo</a>
+   <ul><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Everything in Team</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Enforcement, fleet &amp; attestation</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>On-task scoring &amp; review queue</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>eDiscovery export &amp; legal hold</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>SSO &amp; SCIM</li></ul>
+  </div>
+  <div class="tier">
+   <div class="tn">Enterprise</div><div class="tdesc">Self-hosted, compliance-grade, with the controls auditors expect.</div>
+   <div class="price">Custom</div>
+   <a class="btn btn-g" href="#">Talk to us</a>
+   <ul><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Everything in Business</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Self-hosted in your cloud</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Audit-log streaming &amp; retention</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Compliance API &amp; SAML</li><li><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>Dedicated SLA &amp; support</li></ul>
+  </div>
+ </div>
+</section>
+
+<div class="wrap">
+ <div class="band">
+  <svg class="ap" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <h2 class="sora">Prove your AI rollout is safe.</h2>
+  <p>Stand up Claresso against your own Claude Code fleet today. No agent rewrites, no developer friction — to your CISO and your auditors.</p>
+  <div class="cta" style="justify-content:center"><a class="btn btn-p" href="#">Book a demo</a><a class="btn btn-g" href="#">Read the docs</a></div>
+ </div>
+</div>
+
+<footer class="wrap">
+ <div class="footgrid">
+  <div class="footbrand">
+   <div class="brand"><svg class="mk" style="width:20px;height:20px" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</div>
+   <p>Clarity over the code your AI writes. Governance for company-provided AI coding tools.</p>
+  </div>
+  <div class="col"><h5>Product</h5><a href="#">Platform</a><a href="#">Security</a><a href="#">Pricing</a><a href="#">Changelog</a></div>
+  <div class="col"><h5>Company</h5><a href="#">About</a><a href="#">Careers</a><a href="#">Contact</a></div>
+  <div class="col"><h5>Resources</h5><a href="#">Docs</a><a href="#">Blog</a><a href="#">Status</a></div>
+  <div class="col"><h5>Legal</h5><a href="#">Privacy</a><a href="#">Terms</a><a href="#">DPA</a></div>
+ </div>
+ <div class="footbot"><div>© 2026 Claresso · Governance for AI-assisted engineering</div><div>Made for the people accountable for AI risk.</div></div>
+</footer>
+
+</body></html>

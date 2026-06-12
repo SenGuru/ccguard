@@ -77,11 +77,14 @@ pub fn page(title: &str, body: Markup) -> Html<String> {
                     meta name="viewport" content="width=device-width, initial-scale=1";
                     title { "Claresso — " (title) }
                     link rel="preconnect" href="https://fonts.googleapis.com";
-                    link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap";
+                    link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap";
                     script src="https://cdn.jsdelivr.net/npm/chart.js" {}
                     style { (maud::PreEscaped(CSS)) }
                 }
-                body { div.wrap { (body) } }
+                body {
+                    div.wrap { (body) }
+                    script { (maud::PreEscaped("document.querySelectorAll('.navlinks a').forEach(function(a){if(a.getAttribute('href')===location.pathname)a.classList.add('active')});")) }
+                }
             }
         }
         .into_string(),
@@ -112,30 +115,36 @@ pub fn nav() -> Markup {
 
 const LOGO_SVG: &str = "<svg class=\"logo-mk\" viewBox=\"0 0 64 64\" fill=\"none\"><path d=\"M48.38 20.53 A20 20 0 1 0 48.38 43.47\" stroke=\"currentColor\" stroke-width=\"8\" stroke-linecap=\"round\"/></svg>";
 
-const CSS: &str = ":root{--ink:#0b1220;--ink-2:#46506a;--ink-3:#8a93a8;--line:#e7eaf0;--bg:#f7f8fb;--accent:#2f6bff;--accent-ink:#1e47c8;--accent-wash:#eaf0ff}\
+const CSS: &str = ":root{--bg:#0B0F1A;--panel:#0F1729;--panel-2:#0C1424;--panel-3:#111B30;\
+--ink:#EAEEF8;--ink-2:#8A97B4;--ink-3:#5C6A8C;--line:#1C2740;--line-2:#16203A;\
+--accent:#2F6BFF;--accent-2:#5B87FF;--accent-ink:#5B87FF;--accent-wash:rgba(91,135,255,.10);\
+--ok:#3FD99A;--ok-bg:rgba(63,217,154,.13);--warn:#E7B84D;--warn-bg:rgba(231,184,77,.14);\
+--bad:#FF8A66;--bad-bg:rgba(255,138,102,.14);--violet:#B68CFF;--violet-bg:rgba(182,140,255,.14)}\
 *{box-sizing:border-box}\
-body{font:14px/1.5 Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}\
-.wrap{max-width:1100px;margin:0 auto;padding:14px 28px 64px}\
-h1,h2,h3{font-family:'Space Grotesk',Inter,sans-serif;font-weight:600;letter-spacing:-.02em}h1{font-size:22px;margin:10px 0 16px}h3{font-size:17px}\
+body{font:14px/1.55 Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}\
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px 72px}.wrap:has(.topnav){margin:0 0 0 234px;max-width:1180px;padding:26px 44px 84px}\
+h1,h2,h3{font-family:Sora,Inter,sans-serif;font-weight:600;letter-spacing:-.025em;color:#fff}h1{font-size:24px;margin:16px 0 18px}h2{font-size:19px}h3{font-size:16px}\
 a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline}\
-.topnav{display:flex;align-items:center;gap:30px;padding:6px 0 16px;margin-bottom:16px;border-bottom:1px solid var(--line)}\
-.brand{display:flex;align-items:center;gap:9px;font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--ink);letter-spacing:-.02em;text-decoration:none}\
-.logo-mk{width:21px;height:21px;color:var(--accent);flex:none}\
-.navlinks{display:flex;gap:20px;flex-wrap:wrap}.navlinks a{color:var(--ink-2);font-size:14px;font-weight:500;text-decoration:none}.navlinks a:hover{color:var(--ink);text-decoration:none}\
-table{width:100%;border-collapse:collapse;margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}\
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}thead th{font-family:'Space Grotesk';font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em;font-weight:600}tr:last-child td{border-bottom:0}\
-.badge{padding:3px 9px;border-radius:7px;font-size:12px;font-weight:600}\
-.work,.compliant,.on_task{background:#e6f6ee;color:#067a4e}.personal,.personal_repo{background:#fef3df;color:#a96a00}.unknown,.stale,.low{background:#eef1f6;color:#6b7488}.pending{background:#eaf0ff;color:#1e47c8}\
-.high,.tampered,.noncompliant_account,.off_task{background:#fde8e8;color:#b42318}.medium,.drifted,.review{background:#fef3df;color:#a96a00}.non_engineer_coding{background:#f1e9fb;color:#7a4fb5}\
-.finding{font-size:12px;margin:4px 0 0;color:#a96a00}\
-.ev{border:1px solid var(--line);border-left:3px solid var(--line);margin:8px 0;padding:10px 14px;border-radius:8px;background:#fff}\
-.k{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}\
-.user_prompt{border-left-color:#2f6bff}.assistant_text{border-left-color:#0e9f6e}.thinking{border-left-color:#9aa4b2}.tool_call,.bash_command{border-left-color:#c98a00}.tool_result{border-left-color:#7f9ae2}.file_edit{border-left-color:#d05fb0}.pr{border-left-color:#0db8a0}\
-pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12px/1.5 'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--ink-2)}\
-.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;box-shadow:0 1px 2px rgba(16,24,52,.04)}\
-input,select{font:14px Inter;padding:8px 11px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)}\
-button{font:14px Inter;font-weight:550;padding:8px 14px;border-radius:8px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer}button:hover{background:var(--accent-ink)}\
-.err{color:#b42318}";
+small{color:var(--ink-3)}\
+.topnav{position:fixed;left:0;top:0;bottom:0;z-index:30;width:234px;display:flex;flex-direction:column;gap:3px;padding:22px 16px;border-right:1px solid var(--line);background:var(--panel-2);overflow-y:auto}\
+.brand{display:flex;align-items:center;gap:9px;font-family:Sora;font-weight:600;font-size:18px;color:#fff;letter-spacing:-.03em;text-decoration:none;padding:2px 10px 18px}.brand:hover{text-decoration:none}\
+.logo-mk{width:22px;height:22px;color:var(--accent-2);flex:none}\
+.navlinks{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}.navlinks a{display:flex;align-items:center;gap:10px;color:var(--ink-2);font-size:13.5px;font-weight:500;text-decoration:none;padding:8px 11px;border-radius:8px}.navlinks a:hover{color:#fff;background:rgba(255,255,255,.045);text-decoration:none}.navlinks a.active{color:#fff;background:var(--accent-wash);box-shadow:inset 2px 0 0 var(--accent-2)}\
+table{width:100%;border-collapse:collapse;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}\
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);font-size:13px}thead th{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:var(--panel-2)}tr:last-child td{border-bottom:0}tbody tr:hover{background:rgba(91,135,255,.045)}td a{color:var(--accent-2)}\
+.badge{display:inline-block;padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:600;font-family:'JetBrains Mono',monospace}\
+.work,.compliant,.on_task{background:var(--ok-bg);color:var(--ok)}.personal,.personal_repo{background:var(--bad-bg);color:var(--bad)}.unknown,.stale,.low{background:rgba(140,151,180,.12);color:var(--ink-2)}.pending{background:var(--accent-wash);color:var(--accent-2)}\
+.high,.tampered,.noncompliant_account,.off_task{background:var(--bad-bg);color:var(--bad)}.medium,.drifted,.review,.off_assignment,.label_drifted{background:var(--warn-bg);color:var(--warn)}.non_engineer_coding{background:var(--violet-bg);color:var(--violet)}\
+.finding{font-size:12px;margin:4px 0 0;color:var(--warn)}\
+.ev{border:1px solid var(--line);border-left:3px solid var(--line);margin:8px 0;padding:11px 15px;border-radius:9px;background:var(--panel)}\
+.k{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);font-family:'JetBrains Mono',monospace}\
+.user_prompt{border-left-color:#2F6BFF}.assistant_text{border-left-color:#3FD99A}.thinking{border-left-color:#5C6A8C}.tool_call,.bash_command{border-left-color:#E7B84D}.tool_result{border-left-color:#5B87FF}.file_edit{border-left-color:#D05FB0}.pr{border-left-color:#0DB8A0}\
+pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12px/1.55 'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--ink-2)}\
+.card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);border-radius:13px;padding:20px;margin:14px 0}.card h3{margin-top:0}\
+input,select,textarea{font:14px Inter;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)}input::placeholder{color:var(--ink-3)}input:focus,select:focus{outline:none;border-color:var(--accent)}\
+button{font:14px Inter;font-weight:550;padding:9px 16px;border-radius:8px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer}button:hover{background:var(--accent-2)}\
+.err{color:var(--bad)}\
+@media(max-width:820px){.topnav{position:static;width:auto;flex-direction:row;align-items:center;gap:12px;overflow-x:auto;padding:10px 16px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0 8px 0 0}.navlinks{flex-direction:row;flex-wrap:nowrap}.navlinks a{padding:6px 9px}.wrap:has(.topnav){margin:0 auto;padding:18px 18px 60px}}";
 
 /// Sign-in form. `err` renders an inline error message when present.
 pub fn login_page(err: Option<&str>) -> Html<String> {
@@ -365,8 +374,8 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
             script { (maud::PreEscaped(format!(
                 "new Chart(document.getElementById('donut'),{{type:'doughnut',\
                  data:{{labels:['work','personal','unknown'],datasets:[{{data:[{work},{personal},{unknown}],\
-                 backgroundColor:['#16a34a','#d97706','#475569']}}]}},\
-                 options:{{plugins:{{legend:{{labels:{{color:'#e6e6e6'}}}}}}}}}});"))) }
+                 backgroundColor:['#3FD99A','#FF8A66','#2A3656'],borderColor:'#0F1729',borderWidth:2}}]}},\
+                 options:{{cutout:'66%',plugins:{{legend:{{labels:{{color:'#8A97B4',font:{{family:'Inter'}}}}}}}}}}}});"))) }
         },
     )
 }
@@ -1256,7 +1265,7 @@ pub async fn roles_get(user: WebUser, State(pool): State<PgPool>) -> Html<String
 
             div.card {
                 h1 style="font-size:16px" { "People — role & assignment" }
-                p style="color:#667;font-size:13px" {
+                p style="color:var(--ink-2);font-size:13px" {
                     "Role = their function (drives anomaly flags). Assignment = what they're "
                     "working on right now (drives the off-assignment flag: company work that "
                     "isn't their lane). The assignment is read by the AI judge, in plain English."
@@ -1563,7 +1572,7 @@ async fn render_triage(
                     }
                 }
                 ccguard_core::conformal::CalibrationRegime::Calibrated => {
-                    div.card style="background:#e6f6ee;border-color:#067a4e" {
+                    div.card style="background:var(--ok-bg);border-color:rgba(63,217,154,.35)" {
                         b { "Calibrated to your judgment." }
                         " The AI now abstains to review below "
                         (format!("{:.0}%", calib.threshold.min(1.0) * 100.0)) " confidence (fit on "
@@ -1728,7 +1737,7 @@ async fn render_triage(
                                                 option value="real_personal" { "real personal project" }
                                                 option value="other" { "other" }
                                             }
-                                            button type="submit" style="padding:4px 9px;font-size:12px;background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "Relabel" }
+                                            button type="submit" style="padding:4px 9px;font-size:12px;background:transparent;color:var(--accent-2);border:1px solid var(--line)" { "Relabel" }
                                         }
                                     }
                                 }
@@ -1779,7 +1788,7 @@ async fn render_triage(
                                         form method="post" action={"/dashboard/triage/" (sid) "/relabel"} style="display:inline" {
                                             input type="hidden" name="label" value="personal";
                                             input type="hidden" name="reason" value="real_personal";
-                                            button type="submit" style="padding:4px 9px;font-size:12px;background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "actually personal" }
+                                            button type="submit" style="padding:4px 9px;font-size:12px;background:transparent;color:var(--accent-2);border:1px solid var(--line)" { "actually personal" }
                                         }
                                     }
                                 }
@@ -1848,7 +1857,7 @@ pub async fn triage_draft(
     let (banner, prefill) = match crate::triage_client::draft(&client, "claude-haiku-4-5", &prompt).await {
         Ok(text) => match ccguard_core::policy_draft::parse_draft(&text) {
             Some(triple) => (
-                html! { div.card style="background:#e6f6ee;border-color:#067a4e" { "Drafted from your description — review and edit below, then save." } },
+                html! { div.card style="background:var(--ok-bg);border-color:rgba(63,217,154,.35)" { "Drafted from your description — review and edit below, then save." } },
                 Some(triple),
             ),
             None => (html! { div.card.err { "Couldn't parse a draft — try a template." } }, None),
@@ -2143,7 +2152,7 @@ pub async fn enforcement_page(user: WebUser, State(pool): State<PgPool>) -> Html
                 }
                 @if can_edit {
                     form method="post" action="/dashboard/enforcement/recompute" style="display:inline" {
-                        button type="submit" style="background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "Recompute gate" }
+                        button type="submit" style="background:transparent;color:var(--accent-2);border:1px solid var(--line)" { "Recompute gate" }
                     }
                     " "
                     @if arming.armed {
