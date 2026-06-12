@@ -32,8 +32,9 @@ const JUDGE_TIMEOUT: Duration = Duration::from_secs(90);
 /// path can't mis-parse it; the JSON shape with braces/pipes lives in the piped
 /// prompt instead.
 const INSTRUCTION: &str = "Classify the Claude Code session described in the input. \
-Respond with only a JSON object with three fields - label which is exactly one of work, personal, or unsure; \
-confidence a number from 0 to 1; and reason, one short sentence. Output only that JSON object and nothing else.";
+Respond with only a single JSON object using exactly the fields the input asks for: at minimum label \
+(exactly one of work, personal, or unsure), confidence (a number from 0 to 1), and reason (one short sentence), \
+plus any other fields the input specifies. Output only that JSON object and nothing else.";
 
 /// Run the local Claude Code judge on a server-built prompt; returns the verdict.
 /// The prompt is delivered on STDIN (safe for arbitrary content); only fixed,

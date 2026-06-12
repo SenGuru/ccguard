@@ -1228,7 +1228,7 @@ pub async fn roles_get(user: WebUser, State(pool): State<PgPool>) -> Html<String
     let can_edit = user.role == "owner" || user.role == "admin";
 
     let role_rows = sqlx::query(
-        "select user_email, job_role, note from employee_roles \
+        "select user_email, job_role, note, assignment from employee_roles \
          where tenant_id = $1 order by user_email",
     )
     .bind(&user.tenant_id)
@@ -1255,7 +1255,12 @@ pub async fn roles_get(user: WebUser, State(pool): State<PgPool>) -> Html<String
             }
 
             div.card {
-                h1 style="font-size:16px" { "Job roles" }
+                h1 style="font-size:16px" { "People — role & assignment" }
+                p style="color:#667;font-size:13px" {
+                    "Role = their function (drives anomaly flags). Assignment = what they're "
+                    "working on right now (drives the off-assignment flag: company work that "
+                    "isn't their lane). The assignment is read by the AI judge, in plain English."
+                }
                 @if can_edit {
                     form method="post" action="/dashboard/roles" {
                         input type="hidden" name="kind" value="role";
@@ -1266,24 +1271,29 @@ pub async fn roles_get(user: WebUser, State(pool): State<PgPool>) -> Html<String
                                 @for r in JOB_ROLES { option value=(r) { (r) } }
                             }
                         }
+                        p { "Assigned to (what they should be working on) " br;
+                            input type="text" name="assignment"
+                                placeholder="e.g. Grove — the screen-understanding engine" style="width:100%"; }
                         p { "Note " br;
                             input type="text" name="note" placeholder="optional" style="width:100%"; }
-                        p { button type="submit" { "Save role" } }
+                        p { button type="submit" { "Save" } }
                     }
                 }
                 @if role_rows.is_empty() {
-                    p { "No job roles assigned yet." }
+                    p { "No people configured yet." }
                 } @else {
                     table {
-                        thead { tr { th{"Email"} th{"Role"} th{"Note"} } }
+                        thead { tr { th{"Email"} th{"Role"} th{"Assigned to"} th{"Note"} } }
                         tbody {
                             @for r in &role_rows {
                                 @let email: String = r.get("user_email");
                                 @let role: String = r.get("job_role");
                                 @let note: Option<String> = r.get("note");
+                                @let assignment: Option<String> = r.get("assignment");
                                 tr {
                                     td { (email) }
                                     td { (role) }
+                                    td { (assignment.clone().unwrap_or_default()) }
                                     td { (note.clone().unwrap_or_default()) }
                                 }
                             }
@@ -1360,6 +1370,8 @@ pub struct RolesForm {
     pub classification: String,
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub assignment: String,
 }
 
 /// Roles admin (POST). Owner/admin only (else 403). Branches on `kind`:
@@ -1381,20 +1393,30 @@ pub async fn roles_set(
             Some(n.to_string())
         }
     };
+    let assignment: Option<String> = {
+        let a = f.assignment.trim();
+        if a.is_empty() {
+            None
+        } else {
+            Some(a.to_string())
+        }
+    };
     match f.kind.as_str() {
         "role" => {
             sqlx::query(
-                "insert into employee_roles (tenant_id, user_email, job_role, note, updated_at) \
-                 values ($1,$2,$3,$4, now()) \
+                "insert into employee_roles (tenant_id, user_email, job_role, note, assignment, updated_at) \
+                 values ($1,$2,$3,$4,$5, now()) \
                  on conflict (tenant_id, user_email) do update set \
                    job_role = excluded.job_role, \
                    note = excluded.note, \
+                   assignment = excluded.assignment, \
                    updated_at = now()",
             )
             .bind(&user.tenant_id)
             .bind(f.user_email.trim())
             .bind(f.job_role.trim())
             .bind(&note)
+            .bind(&assignment)
             .execute(&pool)
             .await?;
         }

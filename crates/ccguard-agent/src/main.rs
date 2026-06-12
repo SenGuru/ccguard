@@ -347,6 +347,7 @@ fn run_triage(
                     "reason": v.reason,
                     "mixed": v.mixed,
                     "matched_clause": v.matched_clause,
+                    "off_assignment": v.off_assignment,
                     "input_digest": item.input_digest,
                     "model": format!("claude-code/{}", args.judge_model),
                 });

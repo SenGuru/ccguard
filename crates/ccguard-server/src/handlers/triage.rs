@@ -230,6 +230,20 @@ pub async fn assemble_input(
         .filter_map(|r| r.get::<Option<String>, _>("target"))
         .collect();
 
+    // The developer's current assignment (admin-set), looked up by the session's
+    // user_email. Drives the off-assignment signal; None when unassigned.
+    let assignment = sqlx::query_scalar::<_, Option<String>>(
+        "select r.assignment from captured_sessions s \
+         join employee_roles r on r.tenant_id = s.tenant_id and r.user_email = s.user_email \
+         where s.tenant_id = $1 and s.session_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten()
+    .filter(|a| !a.trim().is_empty());
+
     let mut input = TriageInput {
         repo_org: meta.get("repo_org"),
         repo_name: meta.get("repo_name"),
@@ -238,6 +252,7 @@ pub async fn assemble_input(
         title: meta.get("title"),
         prompts,
         tool_targets,
+        assignment,
         ..Default::default()
     };
     gather_evidence(pool, tenant_id, session_id, &mut input).await?;
@@ -577,15 +592,15 @@ pub async fn apply_verdict(
         "insert into session_triage \
          (tenant_id, session_id, label, confidence, reason, model, resolved_by, structural, \
           enforceable, mixed, matched_clause, policy_version, gaming_flags, input_digest, \
-          next_retry_at, updated_at) \
-         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8,$9,$10,$11,$12,$13, null, now()) \
+          off_assignment, next_retry_at, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8,$9,$10,$11,$12,$13,$14, null, now()) \
          on conflict (tenant_id, session_id) do update set \
            label = excluded.label, confidence = excluded.confidence, reason = excluded.reason, \
            model = excluded.model, resolved_by = 'llm', structural = excluded.structural, \
            enforceable = excluded.enforceable, mixed = excluded.mixed, \
            matched_clause = excluded.matched_clause, policy_version = excluded.policy_version, \
            gaming_flags = excluded.gaming_flags, input_digest = excluded.input_digest, \
-           next_retry_at = null, updated_at = now()",
+           off_assignment = excluded.off_assignment, next_retry_at = null, updated_at = now()",
     )
     .bind(tenant_id)
     .bind(session_id)
@@ -600,6 +615,7 @@ pub async fn apply_verdict(
     .bind(pv)
     .bind(&gaming_flags)
     .bind(input_digest)
+    .bind(verdict.off_assignment)
     .execute(pool)
     .await?;
 
@@ -637,6 +653,31 @@ pub async fn apply_verdict(
                 .await
         {
             eprintln!("re-score after verdict failed for {session_id}: {e}");
+        }
+
+        // Off-assignment indicator: work that is not on this developer's lane.
+        // Triage-derived (not capture-derived), so managed here — clear any stale
+        // open one, then raise it when the applied verdict says off-assignment.
+        let _ = sqlx::query(
+            "delete from indicators where tenant_id=$1 and session_id=$2 \
+             and kind='off_assignment' and status='open'",
+        )
+        .bind(tenant_id)
+        .bind(session_id)
+        .execute(pool)
+        .await;
+        if applied && verdict.off_assignment {
+            let _ = sqlx::query(
+                "insert into indicators (tenant_id, user_email, session_id, kind, detail, status) \
+                 values ($1,$2,$3,'off_assignment',$4,'open') \
+                 on conflict (tenant_id, session_id, kind) do nothing",
+            )
+            .bind(tenant_id)
+            .bind(&email)
+            .bind(session_id)
+            .bind(format!("work, but off assignment: {}", verdict.reason))
+            .execute(pool)
+            .await;
         }
     }
 
@@ -847,6 +888,9 @@ pub struct VerdictBody {
     pub mixed: bool,
     #[serde(default)]
     pub matched_clause: Option<String>,
+    /// WORK that is not on this developer's assignment (off-assignment flag).
+    #[serde(default)]
+    pub off_assignment: bool,
     /// The digest the agent was given for the content it classified; rejected if the
     /// session's content has changed since (stale verdict → re-enqueue, don't apply).
     #[serde(default)]
@@ -896,8 +940,10 @@ pub async fn verdict_endpoint(
         }
     }
 
+    let label = TriageLabel::from_str(&b.label);
     let verdict = TriageVerdict {
-        label: TriageLabel::from_str(&b.label),
+        off_assignment: label == TriageLabel::Work && b.off_assignment,
+        label,
         confidence: b.confidence.clamp(0.0, 1.0),
         reason: b.reason,
         mixed: b.mixed,
