@@ -5,6 +5,13 @@ use ccguard_core::capture::CapturedSession;
 use ccguard_core::enforce::PolicyConfig;
 use ccguard_core::event::CcEvent;
 
+/// One unclassified session + its server-built prompt (from `GET /v1/triage/pending`).
+#[derive(Debug, Deserialize)]
+pub struct PendingItem {
+    pub session_id: String,
+    pub prompt: String,
+}
+
 /// Server response to `POST /v1/enroll` (mirrors `ccguard-server`'s `EnrollResp`).
 ///
 /// `policy_hash`/`managed_settings` are part of the wire contract and parsed for
@@ -82,6 +89,34 @@ impl Poster {
         }
         let parsed: EnrollResp = resp.json()?;
         Ok(parsed)
+    }
+
+    /// GET unclassified sessions to triage for `seat` (the agent's user), each with
+    /// a ready-to-run prompt. The agent answers each via the local Claude Code CLI.
+    pub fn get_triage_pending(&self, seat: &str, limit: u32) -> Result<Vec<PendingItem>> {
+        let url = format!("{}/v1/triage/pending", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.token)
+            .query(&[("seat", seat), ("limit", &limit.to_string())])
+            .send()?;
+        if !(200..300).contains(&resp.status().as_u16()) {
+            return Err(anyhow!("triage pending failed: HTTP {}", resp.status().as_u16()));
+        }
+        Ok(resp.json()?)
+    }
+
+    /// POST a verdict (produced by local Claude Code) to /v1/triage/verdict.
+    pub fn post_triage_verdict(&self, body: &serde_json::Value) -> Result<u16> {
+        let url = format!("{}/v1/triage/verdict", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(body)
+            .send()?;
+        Ok(resp.status().as_u16())
     }
 
     /// POST one attestation to /v1/attest; returns the HTTP status code.

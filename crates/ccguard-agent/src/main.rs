@@ -5,6 +5,7 @@ mod parse;
 mod paths;
 mod poster;
 mod pricing;
+mod local_judge;
 mod repo;
 mod signals;
 mod state;
@@ -47,6 +48,17 @@ struct Args {
     /// (provenance signal C-MDM-ENV). Only its presence is reported, never its value.
     #[arg(long, default_value = "CCGUARD_CORP")]
     corp_env: String,
+    /// Triage mode: classify the server's UNCLASSIFIED sessions by running THIS
+    /// machine's logged-in Claude Code CLI (no separate API key; uses the company's
+    /// existing Claude seat), then post the verdicts back.
+    #[arg(long)]
+    triage: bool,
+    /// (triage) Model alias/id for the local Claude Code judge. Default: haiku.
+    #[arg(long, default_value = "haiku")]
+    judge_model: String,
+    /// (triage) Max sessions to classify in one run (bounds per-run quota). Default: 25.
+    #[arg(long, default_value_t = 25)]
+    triage_limit: u32,
     /// Attestation mode: enroll this device, fetch the expected policy, evaluate the on-disk
     /// managed-settings, and POST the attestation to /v1/attest. Takes priority over harvest modes.
     #[arg(long)]
@@ -238,6 +250,58 @@ fn run_attest(args: &Args, claude_dir: &Path, poster: &Poster) -> anyhow::Result
     Ok(())
 }
 
+/// Triage UNCLASSIFIED sessions by running the machine's logged-in Claude Code on
+/// server-built prompts, posting each verdict back. No CCGuard API key — uses the
+/// company's existing Claude seat, and session content stays in the Claude Code
+/// channel they already authorized.
+fn run_triage(args: &Args, email: &str, poster: &Poster) -> anyhow::Result<()> {
+    let pending = poster.get_triage_pending(email, args.triage_limit)?;
+    if pending.is_empty() {
+        println!("CCGuard agent: no unclassified sessions to triage.");
+        return Ok(());
+    }
+    println!(
+        "CCGuard agent: triaging {} session(s) via local Claude Code (model {})...",
+        pending.len(),
+        args.judge_model
+    );
+    let mut done = 0usize;
+    let mut failed = 0usize;
+    for item in &pending {
+        match local_judge::classify(&item.prompt, &args.judge_model) {
+            Ok(v) => {
+                let body = serde_json::json!({
+                    "session_id": item.session_id,
+                    "label": v.label.as_str(),
+                    "confidence": v.confidence,
+                    "reason": v.reason,
+                    "model": format!("claude-code/{}", args.judge_model),
+                });
+                match poster.post_triage_verdict(&body) {
+                    Ok(s) if (200..300).contains(&s) => done += 1,
+                    Ok(s) => {
+                        eprintln!("  verdict POST HTTP {s} for {}", item.session_id);
+                        failed += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("  verdict POST error: {e}");
+                        failed += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  judge failed for {}: {e}", item.session_id);
+                failed += 1;
+            }
+        }
+    }
+    println!(
+        "CCGuard agent: triaged {done} session(s){}.",
+        if failed > 0 { format!(", {failed} failed") } else { String::new() }
+    );
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let claude_dir = args
@@ -281,6 +345,11 @@ fn main() -> anyhow::Result<()> {
         claude_dir.display(),
         email
     );
+
+    // Triage mode: classify the server's UNCLASSIFIED sessions via local Claude Code.
+    if args.triage {
+        return run_triage(&args, &email, &poster);
+    }
 
     let state_path = claude_dir.join("ccguard-agent-state.json");
     let mut st = State::load(&state_path);

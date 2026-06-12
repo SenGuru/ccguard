@@ -237,7 +237,6 @@ async fn forward(cfg: &Cfg, method: Method, uri: Uri, headers: HeaderMap, body: 
 
     let status = upstream.status();
     let resp_headers = upstream.headers().clone();
-    let out_bytes = upstream.bytes().await.unwrap_or_default();
     let mut builder = Response::builder().status(status);
     for (k, v) in resp_headers.iter() {
         let kl = k.as_str().to_ascii_lowercase();
@@ -246,8 +245,11 @@ async fn forward(cfg: &Cfg, method: Method, uri: Uri, headers: HeaderMap, body: 
         }
         builder = builder.header(k, v);
     }
+    // Stream the upstream body straight through — never buffer a (possibly long,
+    // streaming) completion in the proxy. Status + headers are sent first, then the
+    // body flows chunk-by-chunk.
     builder
-        .body(Body::from(out_bytes))
+        .body(Body::from_stream(upstream.bytes_stream()))
         .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "proxy error").into_response())
 }
 

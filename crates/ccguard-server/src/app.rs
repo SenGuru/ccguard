@@ -5,7 +5,7 @@ use sqlx::PgPool;
 
 use crate::handlers::{
     capture, enforcement, findings, fleet, ingest, ontask, search, sessions, summary, tenants,
-    timeline, users,
+    timeline, triage, users,
 };
 use crate::web;
 
@@ -64,6 +64,8 @@ pub fn app(pool: PgPool) -> Router {
             "/v1/enforcement/decision",
             get(enforcement::decision_endpoint),
         )
+        .route("/v1/triage/pending", get(triage::pending_endpoint))
+        .route("/v1/triage/verdict", post(triage::verdict_endpoint))
         .route("/v1/tenants", post(tenants::create_tenant))
         .route("/v1/users", post(users::create_user))
         .route("/v1/auth/login", post(sessions::login))

@@ -9,11 +9,16 @@
 //! deterministic structural classifier independently agrees. Confirming a verdict
 //! for usage-limiting is a separate, human action (`confirm_triage`).
 
+use axum::extract::{Query, State};
+use axum::Json;
 use ccguard_core::conformal::{self, Calibration, SelectiveDecision};
 use ccguard_core::event::Classification;
-use ccguard_core::triage::{StructuredPolicy, TriageInput, TriageLabel, TriageVerdict};
+use ccguard_core::triage::{self, StructuredPolicy, TriageInput, TriageLabel, TriageVerdict};
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
+use crate::auth::AuthedTenant;
+use crate::error::AppError;
 use crate::handlers::enforcement;
 use crate::triage_client::{self, TriageClientError};
 
@@ -232,8 +237,28 @@ pub async fn triage_one(
         .await
         .map_err(TriageError::Client)?;
 
-    // Conformal selective gate: a below-threshold verdict abstains to review.
-    let abstained = matches!(conformal::decide(verdict.confidence, calib), SelectiveDecision::Abstain)
+    Ok(apply_verdict(pool, tenant_id, session_id, &verdict, &cfg.model, calib).await?)
+}
+
+/// Persist a verdict and gate it — independent of HOW the verdict was produced
+/// (the server-side Anthropic API, or the agent's local Claude Code CLI). Applies
+/// the conformal selective threshold, the structural enforceability gate, and
+/// mirrors a definite label onto the session. Pure-of-network.
+pub async fn apply_verdict(
+    pool: &PgPool,
+    tenant_id: &str,
+    session_id: &str,
+    verdict: &TriageVerdict,
+    model: &str,
+    calib: &Calibration,
+) -> Result<TriageOutcome, sqlx::Error> {
+    // Conformal selective gate: once CALIBRATED, a below-threshold verdict abstains
+    // to review. Before calibration (not enough human labels yet) the judge runs
+    // uncalibrated and applies its label for visibility — otherwise it could never
+    // produce the verdicts humans review to build the calibration set in the first
+    // place. The abstain wrapper only suppresses application once it can vouch.
+    let abstained = calib.usable
+        && matches!(conformal::decide(verdict.confidence, calib), SelectiveDecision::Abstain)
         && verdict.label != TriageLabel::Unsure;
 
     // Structural corroboration → enforceability gate (never enforceable if abstained).
@@ -270,7 +295,7 @@ pub async fn triage_one(
     .bind(verdict.label.as_str())
     .bind(verdict.confidence)
     .bind(&reason)
-    .bind(&cfg.model)
+    .bind(model)
     .bind(structural.as_str())
     .bind(enforceable)
     .execute(pool)
@@ -291,7 +316,7 @@ pub async fn triage_one(
         }
     }
 
-    Ok(TriageOutcome { verdict, applied, abstained })
+    Ok(TriageOutcome { verdict: verdict.clone(), applied, abstained })
 }
 
 /// Sweep: triage up to `limit` currently-UNCLASSIFIED sessions that have no
@@ -379,4 +404,109 @@ impl std::fmt::Display for TriageError {
             TriageError::SessionNotFound => write!(f, "session not found"),
         }
     }
+}
+
+// ---- Agent-executed triage (via the employee's local Claude Code) ------------
+//
+// The judge can run two ways: server-side against the Anthropic API (a CCGuard
+// key), OR — the preferred path — on the employee's own machine through the
+// already-installed, already-logged-in Claude Code CLI, so it uses the company's
+// existing Claude seat, costs nothing extra, and session content never leaves
+// their tenancy. The server assembles the prompt; the agent runs it; the verdict
+// comes back here and flows through the SAME conformal + structural gates.
+
+/// One unclassified session the agent should classify, with the ready-to-run prompt.
+#[derive(Debug, Serialize)]
+pub struct PendingItem {
+    pub session_id: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PendingQuery {
+    /// Restrict to one developer's sessions (the agent passes its own identity).
+    #[serde(default)]
+    pub seat: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// `GET /v1/triage/pending` — unclassified sessions with a server-built prompt for
+/// the agent's local Claude Code to answer. Ingest-token (tenant) auth.
+pub async fn pending_endpoint(
+    AuthedTenant(tenant): AuthedTenant,
+    State(pool): State<PgPool>,
+    Query(q): Query<PendingQuery>,
+) -> Result<Json<Vec<PendingItem>>, AppError> {
+    let cfg = load_config(&pool, &tenant).await?;
+    let policy = cfg.structured_policy();
+    let work_def = if cfg.work_definition.trim().is_empty() {
+        None
+    } else {
+        Some(cfg.work_definition.as_str())
+    };
+    let limit = q.limit.unwrap_or(25).clamp(1, 100);
+
+    let rows = sqlx::query(
+        "select s.session_id from captured_sessions s \
+         left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
+         where s.tenant_id=$1 and s.classification='unknown' and t.session_id is null \
+           and ($2::text is null or s.user_email=$2) \
+         order by s.last_ts desc nulls last limit $3",
+    )
+    .bind(&tenant)
+    .bind(&q.seat)
+    .bind(limit)
+    .fetch_all(&pool)
+    .await?;
+
+    let system = triage::system_prompt(&policy, work_def);
+    let mut out = Vec::new();
+    for r in &rows {
+        let sid: String = r.get("session_id");
+        if let Some(input) = assemble_input(&pool, &tenant, &sid).await? {
+            let prompt = format!("{system}\n\n{}", triage::user_prompt(&input));
+            out.push(PendingItem { session_id: sid, prompt });
+        }
+    }
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerdictBody {
+    pub session_id: String,
+    pub label: String,
+    #[serde(default = "half")]
+    pub confidence: f32,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+fn half() -> f32 {
+    0.5
+}
+
+/// `POST /v1/triage/verdict` — a verdict the agent produced via local Claude Code.
+/// Flows through the same conformal + structural gates as the server-API path.
+/// Ingest-token (tenant) auth.
+pub async fn verdict_endpoint(
+    AuthedTenant(tenant): AuthedTenant,
+    State(pool): State<PgPool>,
+    Json(b): Json<VerdictBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let verdict = TriageVerdict {
+        label: TriageLabel::from_str(&b.label),
+        confidence: b.confidence.clamp(0.0, 1.0),
+        reason: b.reason,
+    };
+    let model = b.model.unwrap_or_else(|| "claude-code-local".to_string());
+    let calib = enforcement::load_calibration(&pool, &tenant).await?;
+    let outcome = apply_verdict(&pool, &tenant, &b.session_id, &verdict, &model, &calib).await?;
+    Ok(Json(serde_json::json!({
+        "session_id": b.session_id,
+        "label": outcome.verdict.label.as_str(),
+        "applied": outcome.applied,
+        "abstained": outcome.abstained,
+    })))
 }

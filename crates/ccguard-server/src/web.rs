@@ -1484,9 +1484,16 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                     "session content is model-judged and gameable, so a wrong " i { "personal" } " must not throttle anyone on its own."
                 }
                 p {
-                    "Anthropic API key: "
+                    b { "Two ways to run the judge." }
+                    " Preferred: the endpoint agent's " code { "--triage" } " mode runs each employee's "
+                    b { "own logged-in Claude Code" } " (" code { "claude -p" } ") — no CCGuard API key, uses the "
+                    "company's existing Claude seat, and session content never leaves their machine. "
+                    "Alternatively the " b { "Run" } " button below calls the Anthropic API from the server."
+                }
+                p {
+                    "Server-side Anthropic API key: "
                     @if key_present { span.badge.work { "configured" } }
-                    @else { span.badge.high { "not set" } " — set " code { "ANTHROPIC_API_KEY" } " (and optionally " code { "ANTHROPIC_BASE_URL" } " to keep content in your tenancy) and restart the server." }
+                    @else { span.badge.unknown { "not set" } " — only needed for the server-side Run button (set " code { "ANTHROPIC_API_KEY" } ", optionally " code { "ANTHROPIC_BASE_URL" } " for in-tenancy, and restart). The agent " code { "--triage" } " path needs none of this." }
                 }
                 p {
                     b { (unclassified) } " session(s) currently unclassified · verdicts so far: "
