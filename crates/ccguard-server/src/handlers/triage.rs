@@ -36,6 +36,11 @@ const MAX_BACKGROUND_DOCS: i64 = 120;
 /// A cwd shared by more than this many sessions is a hub (e.g. the home dir) and
 /// carries no continuity signal.
 const CWD_HUB_LIMIT: i64 = 10;
+/// Same for shared files: a file edited across many sessions (memory indexes,
+/// CLAUDE.md, dotfiles) is a hub — sharing it proves nothing. Live-caught
+/// 2026-06-12: MEMORY.md (52 sessions) linked a non-work session to confirmed
+/// work and the judge trusted the edge.
+const FILE_HUB_LIMIT: i64 = 5;
 
 /// SQL predicate excluding harness-injected "prompts" that are not the developer's
 /// words (pasted skill bodies, local-command caveats, system reminders). They'd
@@ -356,11 +361,15 @@ async fn gather_evidence(
              join captured_sessions s2 on s2.tenant_id = e2.tenant_id and s2.session_id = e2.session_id \
              where e1.tenant_id = $1 and e1.session_id = $2 and e1.kind = 'file_edit' \
                and e1.target is not null \
+               and (select count(distinct e3.session_id) from captured_events e3 \
+                    where e3.tenant_id = e1.tenant_id and e3.kind = 'file_edit' \
+                      and e3.target = e1.target) <= $4 \
              limit $3",
         )
         .bind(tenant_id)
         .bind(session_id)
         .bind(MAX_RELATED - related.len() as i64)
+        .bind(FILE_HUB_LIMIT)
         .fetch_all(pool)
         .await?;
         for r in &by_files {
