@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tract — govern AI coding without getting in the way</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#fbfaf7; --ink:#1a1916; --ink-2:#56524a; --ink-3:#8f897d;
+    --line:#e7e3da; --line-2:#efece4; --accent:#b8521f; --accent-2:#9c4318;
+    --card:#ffffff; --ok:#3f7d52; --bad:#b4452e;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:Fraunces,Georgia,serif;font-weight:500;letter-spacing:-.01em;margin:0;text-wrap:balance}
+  p{margin:0;text-wrap:pretty}
+  a{color:inherit;text-decoration:none}
+  .mono{font-family:"JetBrains Mono",monospace}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 36px}
+  .rule{height:1px;background:var(--line)}
+
+  nav{border-bottom:1px solid var(--line);background:rgba(251,250,247,.85);backdrop-filter:blur(8px);position:sticky;top:0;z-index:20}
+  .nav-in{display:flex;align-items:center;height:70px;gap:36px}
+  .brand{font-family:Fraunces;font-weight:600;font-size:22px;letter-spacing:-.01em;display:flex;align-items:center;gap:11px}
+  .brand .m{width:10px;height:10px;background:var(--accent);border-radius:2px;transform:rotate(45deg)}
+  .nav-links{display:flex;gap:28px;margin-left:8px}.nav-links a{color:var(--ink-2);font-size:14px;font-weight:450}
+  .nav-links a:hover{color:var(--ink)}
+  .nav-right{margin-left:auto;display:flex;align-items:center;gap:22px}
+  .link{color:var(--ink-2);font-size:14px;font-weight:500}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 20px;font-weight:500;font-size:14.5px;cursor:pointer;border:1px solid var(--ink);background:var(--ink);color:var(--paper);border-radius:2px;transition:.15s}
+  .btn:hover{background:#000}
+  .btn-line{background:transparent;color:var(--ink);border-color:var(--line)}.btn-line:hover{border-color:var(--ink)}
+
+  .hero{padding:96px 0 30px}
+  .eyebrow{font-family:"JetBrains Mono";font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent-2);font-weight:500}
+  h1.title{font-size:74px;line-height:1.0;margin-top:28px;max-width:13ch;font-weight:500}
+  h1.title em{font-style:italic;color:var(--accent)}
+  .lede{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:38px;align-items:end}
+  .lede p{font-size:19px;color:var(--ink-2);max-width:44ch;line-height:1.6}
+  .lede .act{display:flex;gap:12px;justify-content:flex-end}
+  .micro{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-3);margin-top:26px;letter-spacing:.02em}
+
+  /* quiet product line */
+  .quiet{margin:64px 0 0;border:1px solid var(--line);border-radius:6px;background:var(--card);overflow:hidden}
+  .q-top{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line-2)}
+  .q-top .lbl{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-3);letter-spacing:.04em}
+  .q-top .right{margin-left:auto;font-family:"JetBrains Mono";font-size:12px;color:var(--ok)}
+  .q-body{display:grid;grid-template-columns:1.4fr 1fr}
+  .q-col{padding:24px 26px}
+  .q-col + .q-col{border-left:1px solid var(--line-2);background:#fcfbf8}
+  .q-col h4{font-family:"JetBrains Mono";font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:500;margin:0 0 16px}
+  .ln{display:flex;gap:14px;padding:11px 0;border-bottom:1px solid var(--line-2);align-items:baseline}
+  .ln:last-child{border-bottom:0}
+  .ln .t{font-family:"JetBrains Mono";font-size:10.5px;color:var(--accent-2);letter-spacing:.05em;text-transform:uppercase;width:78px;flex:none;padding-top:2px}
+  .ln .x{font-size:13.5px;color:var(--ink-2);line-height:1.5}
+  .ln .x b{color:var(--ink);font-weight:600}
+  .mini{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line-2)}
+  .mini:last-child{border-bottom:0}
+  .mini .nm{font-size:13.5px}.mini .nm span{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-3);display:block;margin-top:2px}
+  .tag{font-family:"JetBrains Mono";font-size:11px;padding:3px 8px;border-radius:3px}
+  .tag.ok{background:#eaf3ec;color:var(--ok)}.tag.warn{background:#f6ede0;color:#9a6a16}.tag.bad{background:#f6e7e2;color:var(--bad)}
+
+  /* manifesto sections */
+  .feat{padding:110px 0}
+  .feat .row{display:grid;grid-template-columns:0.85fr 1.15fr;gap:60px;align-items:start;padding:54px 0;border-top:1px solid var(--line)}
+  .feat .row:first-of-type{border-top:0}
+  .feat .ix{font-family:"JetBrains Mono";font-size:13px;color:var(--ink-3)}
+  .feat h2{font-size:34px;line-height:1.12;margin-top:12px;max-width:14ch}
+  .feat .b{font-size:17px;color:var(--ink-2);line-height:1.65;max-width:52ch}
+  .feat .b strong{color:var(--ink);font-weight:600}
+  .pts{margin-top:24px;display:flex;flex-direction:column;gap:13px}
+  .pt{display:flex;gap:12px;font-size:14.5px;color:var(--ink-2)}
+  .pt .d{font-family:"JetBrains Mono";color:var(--accent-2);flex:none}
+
+  .pull{padding:90px 0;text-align:center;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .pull blockquote{font-family:Fraunces;font-weight:500;font-size:38px;line-height:1.25;max-width:24ch;margin:0 auto;letter-spacing:-.01em}
+  .pull blockquote em{font-style:italic;color:var(--accent)}
+
+  .band{padding:104px 0;text-align:center}
+  .band h2{font-size:46px;max-width:18ch;margin:0 auto}
+  .band p{font-size:18px;color:var(--ink-2);margin:18px auto 0;max-width:48ch}
+  .band .act{display:flex;gap:12px;justify-content:center;margin-top:30px}
+
+  footer{border-top:1px solid var(--line);padding:42px 0}
+  .foot{display:flex;justify-content:space-between;align-items:center;color:var(--ink-3);font-family:"JetBrains Mono";font-size:12px;letter-spacing:.02em}
+
+  @media(max-width:880px){h1.title{font-size:48px}.lede,.q-body,.feat .row{grid-template-columns:1fr}.lede .act{justify-content:flex-start}.q-col+.q-col{border-left:0;border-top:1px solid var(--line-2)}}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap nav-in">
+  <div class="brand"><span class="m"></span>Tract</div>
+  <div class="nav-links"><a href="#">Overview</a><a href="#">Visibility</a><a href="#">Control</a><a href="#">Evidence</a><a href="#">Pricing</a></div>
+  <div class="nav-right"><a class="link" href="#">Sign in</a><a class="btn" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="hero wrap">
+  <div class="eyebrow">Governance for AI-assisted engineering</div>
+  <h1 class="title">Govern AI coding without <em>getting in the way.</em></h1>
+  <div class="lede">
+    <p>Your engineers move fast with Claude Code. Tract gives the people accountable for risk a quiet, complete account of what the AI did — and the controls to keep it in bounds — without a single plugin in the developer's way.</p>
+    <div class="act">
+      <a class="btn" href="#">Book a demo</a>
+      <a class="btn btn-line" href="#">Read the brief</a>
+    </div>
+  </div>
+  <div class="micro">// visible, non-covert · works telemetry-off · the console audits itself</div>
+
+  <div class="quiet">
+    <div class="q-top"><span class="m" style="width:8px;height:8px;background:var(--accent);border-radius:2px;transform:rotate(45deg)"></span><span class="lbl">session / dana@acme.com / deploy-script-help</span><span class="right">on-task 88 · on policy</span></div>
+    <div class="q-body">
+      <div class="q-col">
+        <h4>The complete account</h4>
+        <div class="ln"><span class="t">prompt</span><span class="x">"wire the deploy, use AWS key AKIA…7EXAMPLE, ship the <b>PROJ-7</b> rollout"</span></div>
+        <div class="ln"><span class="t">finding</span><span class="x"><b>secret · aws_access_key</b> + pii · email — flagged inline, redacted in the record</span></div>
+        <div class="ln"><span class="t">tool</span><span class="x">git commit · gh pr create → <b>PR #214</b></span></div>
+        <div class="ln"><span class="t">verdict</span><span class="x">commit landed · references a tracked ticket · <b>on-task</b></span></div>
+      </div>
+      <div class="q-col">
+        <h4>Fleet · on policy</h4>
+        <div class="mini"><div class="nm">WS-ENG-07<span>dana · macOS</span></div><span class="tag ok">compliant</span></div>
+        <div class="mini"><div class="nm">WS-MKT-02<span>sam · windows</span></div><span class="tag warn">drifted</span></div>
+        <div class="mini"><div class="nm">LAPTOP-14<span>unmanaged</span></div><span class="tag bad">tampered</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="feat wrap">
+  <div class="row">
+    <div><div class="ix">01 / SEE</div><h2>A complete account, reconstructed from the work itself.</h2></div>
+    <div>
+      <p class="b">Tract reads the record Claude Code already leaves on disk and turns it into something you can actually review: <strong>every prompt, response, tool call, and diff</strong>, replayable session by session. It needs no cooperation from the tool and works even when vendor telemetry is off — so there is no blind spot to account for.</p>
+      <div class="pts">
+        <div class="pt"><span class="d">—</span>Verbatim session replay, secrets and PII surfaced and redacted in place.</div>
+        <div class="pt"><span class="d">—</span>Full-text search across the whole corpus; legal hold and one-click export for counsel.</div>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div><div class="ix">02 / HOLD</div><h2>Controls that hold, because they're the platform's own.</h2></div>
+    <div>
+      <p class="b">Tract generates the managed policy Claude Code respects above everything else — <strong>forcing telemetry, locking login to your organization, blocking personal accounts</strong> — and ships it through your MDM. Then every endpoint quietly attests the policy is intact. When something drifts or is tampered with, you know.</p>
+      <div class="pts">
+        <div class="pt"><span class="d">—</span>Highest-precedence config; users can't override it.</div>
+        <div class="pt"><span class="d">—</span>Continuous attestation: compliant, drifted, or tampered — across the fleet.</div>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div><div class="ix">03 / JUDGE</div><h2>On-task, judged on what actually shipped.</h2></div>
+    <div>
+      <p class="b">Not keystrokes. Not screen-watching. Tract scores each session on the signals that matter to the business — <strong>did work land in a commit, map to a ticket, survive review</strong> — and lets you define what "work" means per repository. Role-aware anomalies become indicators a human reviews, never an automated verdict.</p>
+      <div class="pts">
+        <div class="pt"><span class="d">—</span>Per-repo work definitions: "looks unrelated but is related," handled.</div>
+        <div class="pt"><span class="d">—</span>A review queue, not a punishment engine.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="pull"><div class="wrap"><blockquote>You gave the team a powerful tool. Tract is how you stay <em>accountable</em> for it.</blockquote></div></div>
+
+<div class="band wrap">
+  <h2>The quiet account of your AI engineering.</h2>
+  <p>Stand Tract up against your own Claude Code fleet. Nothing for your developers to install, learn, or work around.</p>
+  <div class="act"><a class="btn" href="#">Book a demo</a><a class="btn btn-line" href="#">See the docs</a></div>
+</div>
+
+<footer><div class="wrap foot">
+  <div>TRACT — GOVERNANCE FOR AI-ASSISTED ENGINEERING</div>
+  <div>© 2026</div>
+</div></footer>
+
+</body>
+</html>

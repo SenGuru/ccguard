@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claresso — logo exploration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=Hanken+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0f1422; --ink-2:#5a6478; --ink-3:#9aa2b4;
+    --accent:#2f6bff; --accent-deep:#1e47c8; --accent-soft:#eaf0ff;
+    --line:#e8ebf2; --bg:#f5f7fb; --paper:#fff; --night:#0d1220;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 32px 80px}
+  h1{font-family:"Space Grotesk";font-weight:700;letter-spacing:-.02em;font-size:26px;margin:0}
+  .sub{color:var(--ink-2);margin-top:8px;max-width:80ch;line-height:1.5}
+  .mono{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-2)}
+  h2.sec{font-family:"Space Grotesk";font-weight:600;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin:46px 0 16px;border-top:1px solid var(--line);padding-top:22px}
+
+  /* the mark — Claresso aperture C (vector, currentColor) */
+  .mk{display:block}
+  .mk path{fill:none;stroke:currentColor}
+
+  /* hero */
+  .hero{background:var(--paper);border:1px solid var(--line);border-radius:18px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr}
+  .hero .light,.hero .dark{padding:54px 48px;display:flex;align-items:center;gap:22px}
+  .hero .dark{background:var(--night)}
+  .lockup{display:flex;align-items:center;gap:16px}
+  .word{font-family:"Sora";font-weight:600;letter-spacing:-.02em;font-size:46px;line-height:1}
+  .light .word{color:var(--ink)} .light .ic{color:var(--accent)}
+  .dark .word{color:#fff} .dark .ic{color:#5b87ff}
+  .tagrow{margin-top:6px;font-family:"JetBrains Mono";font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+  .light .tagrow{color:var(--ink-3)} .dark .tagrow{color:#6b7488}
+
+  /* variant grid */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .stage{padding:40px 30px;display:flex;align-items:center;justify-content:center;min-height:150px;gap:16px}
+  .stage.dk{background:var(--night)}
+  .cap{padding:14px 18px;border-top:1px solid var(--line)}
+  .cap .nm{font-family:"Space Grotesk";font-weight:600;font-size:14px}
+  .cap .meta{color:var(--ink-2);font-size:12.5px;margin-top:3px;line-height:1.45}
+  .cap .sig{margin-top:8px;font-size:11.5px}
+  .cap .sig b{color:var(--accent-deep)}
+
+  .lockup.lg .word{font-size:38px}
+  .w-sora{font-family:"Sora";font-weight:600;letter-spacing:-.02em}
+  .w-space{font-family:"Space Grotesk";font-weight:600;letter-spacing:-.025em}
+  .w-hanken{font-family:"Hanken Grotesk";font-weight:600;letter-spacing:-.02em}
+
+  /* application / small-size strip */
+  .apps{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .chip{border:1px solid var(--line);border-radius:12px;background:var(--paper);display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 16px;min-width:96px}
+  .chip .lbl{font-family:"JetBrains Mono";font-size:10px;color:var(--ink-3);letter-spacing:.04em}
+  .tile{width:56px;height:56px;border-radius:13px;display:grid;place-items:center;color:#fff;background:var(--accent)}
+  .tile.sq{border-radius:13px}
+  .favi{display:grid;place-items:center}
+  .favbg{background:var(--paper)}
+
+  /* color options */
+  .swatches{display:flex;gap:14px;flex-wrap:wrap}
+  .sw{display:flex;align-items:center;gap:12px;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:12px 16px}
+  .sw .dot{width:34px;height:34px;border-radius:9px}
+  .sw .info b{font-family:"Space Grotesk";font-size:13px}
+  .sw .info span{display:block;font-family:"JetBrains Mono";font-size:11px;color:var(--ink-2);margin-top:2px}
+
+  @media(max-width:820px){.hero,.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Claresso · logo exploration</h1>
+  <p class="sub">One concept, executed several ways. The mark is a <b>“C” drawn as a precise aperture / focus ring</b> — it reads as the letter <i>and</i> as clarity/focus, never as an eye. Vector (SVG), so it holds from a 16&nbsp;px favicon to signage and survives single-color &amp; embroidery. Type stays in the clean-devtool register you locked. Pick a direction and I’ll refine it to production.</p>
+
+  <!-- HERO: recommended lockup, integrated mark as the C -->
+  <h2 class="sec">Recommended · “Aperture” lockup</h2>
+  <div class="hero">
+    <div class="light">
+      <div class="lockup">
+        <svg class="mk ic" width="52" height="52" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+        <div><div class="word">Claresso</div><div class="tagrow">Clarity over AI&nbsp;code</div></div>
+      </div>
+    </div>
+    <div class="dark">
+      <div class="lockup">
+        <svg class="mk ic" width="52" height="52" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+        <div><div class="word">Claresso</div><div class="tagrow" style="color:#6b7488">Clarity over AI&nbsp;code</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VARIANTS -->
+  <h2 class="sec">Directions to choose from</h2>
+  <div class="grid">
+
+    <!-- 01 integrated mark-as-C -->
+    <div class="card">
+      <div class="stage">
+        <div class="lockup" style="gap:2px">
+          <svg class="mk" width="44" height="44" viewBox="0 0 64 64" style="color:var(--accent);margin-right:-2px"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+          <span class="word w-sora" style="font-size:40px;color:var(--ink)">laresso</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">01 · Mark-as-C (integrated)</div><div class="meta">Aperture mark replaces the capital C · Sora 600. The most ownable lockup — the symbol IS the first letter.</div><div class="sig"><b>Signals:</b> precise, confident, integrated. <b>Rejects:</b> generic icon-beside-text.</div></div>
+    </div>
+
+    <!-- 02 side lockup Sora -->
+    <div class="card">
+      <div class="stage">
+        <div class="lockup">
+          <svg class="mk" width="40" height="40" viewBox="0 0 64 64" style="color:var(--accent)"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+          <span class="word w-sora" style="font-size:34px;color:var(--ink)">Claresso</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">02 · Side lockup · Sora</div><div class="meta">Classic symbol-left lockup, geometric sans. Reads modern, considered, optimistic — Linear/Vercel register.</div><div class="sig"><b>Signals:</b> clean, contemporary. <b>Rejects:</b> heritage, serious-corporate.</div></div>
+    </div>
+
+    <!-- 03 Focus mark (concentric) + Hanken -->
+    <div class="card">
+      <div class="stage">
+        <div class="lockup">
+          <svg class="mk" width="42" height="42" viewBox="0 0 64 64" style="color:var(--accent)">
+            <path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="6" stroke-linecap="round"/>
+            <path d="M41.0 25.69 A11 11 0 1 0 41.0 38.31" stroke-width="5" stroke-linecap="round" style="opacity:.5"/>
+          </svg>
+          <span class="word w-hanken" style="font-size:33px;color:var(--ink)">Claresso</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">03 · “Focus” mark · Hanken Grotesk</div><div class="meta">Concentric C arcs = focusing/clarity rings. Humanist sans warms it — professional but human.</div><div class="sig"><b>Signals:</b> focus, depth, approachable trust. <b>Rejects:</b> cold, flat.</div></div>
+    </div>
+
+    <!-- 04 distinctive grotesque wordmark only -->
+    <div class="card">
+      <div class="stage">
+        <span class="word w-space" style="font-size:40px;color:var(--ink)">Claresso</span>
+      </div>
+      <div class="cap"><div class="nm">04 · Wordmark only · Space Grotesk</div><div class="meta">No symbol — the name carries it. Distinctive grotesque with character; the mark becomes a favicon-only fallback.</div><div class="sig"><b>Signals:</b> confident, type-led, design-aware. <b>Rejects:</b> needing a crutch icon.</div></div>
+    </div>
+
+    <!-- 05 airy light sora wordmark -->
+    <div class="card">
+      <div class="stage">
+        <span class="word" style="font-family:Sora;font-weight:500;font-size:40px;letter-spacing:-.01em;color:var(--ink)">claresso</span>
+      </div>
+      <div class="cap"><div class="nm">05 · Lowercase · Sora 500</div><div class="meta">All-lowercase, lighter weight — softer, friendlier, very “modern devtool.” Pairs with the aperture mark for square contexts.</div><div class="sig"><b>Signals:</b> open, calm, accessible. <b>Rejects:</b> shouty enterprise.</div></div>
+    </div>
+
+    <!-- 06 monogram tile / app icon -->
+    <div class="card">
+      <div class="stage dk">
+        <div class="tile" style="width:64px;height:64px;border-radius:15px">
+          <svg class="mk" width="38" height="38" viewBox="0 0 64 64" style="color:#fff"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+        </div>
+        <div class="tile" style="width:64px;height:64px;border-radius:15px;background:var(--accent-soft)">
+          <svg class="mk" width="38" height="38" viewBox="0 0 64 64" style="color:var(--accent)"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">06 · App icon / monogram tile</div><div class="meta">The mark in a rounded square — app icon, social avatar, square contexts. The brand’s small-size workhorse.</div><div class="sig"><b>Signals:</b> system, product. <b>Rejects:</b> lockup-cramped-into-square.</div></div>
+    </div>
+  </div>
+
+  <!-- APPLICATION / SMALL SIZE -->
+  <h2 class="sec">Same mark, every context (the discipline)</h2>
+  <div class="apps">
+    <div class="chip"><div class="favi" style="width:48px;height:48px;color:var(--accent)"><svg class="mk" width="32" height="32" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="9" stroke-linecap="round"/></svg></div><span class="lbl">favicon 32</span></div>
+    <div class="chip"><div class="favi" style="width:32px;height:32px;color:var(--accent)"><svg class="mk" width="16" height="16" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="10" stroke-linecap="round"/></svg></div><span class="lbl">favicon 16</span></div>
+    <div class="chip"><div class="favi" style="width:48px;height:48px;color:var(--ink)"><svg class="mk" width="34" height="34" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg></div><span class="lbl">1-color black</span></div>
+    <div class="chip" style="background:var(--night);border-color:#1c2333"><div class="favi" style="width:48px;height:48px;color:#fff"><svg class="mk" width="34" height="34" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg></div><span class="lbl" style="color:#5a6478">reverse</span></div>
+    <div class="chip"><div class="tile" style="width:48px;height:48px;border-radius:11px"><svg class="mk" width="28" height="28" viewBox="0 0 64 64" style="color:#fff"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="8" stroke-linecap="round"/></svg></div><span class="lbl">app tile</span></div>
+    <div class="chip"><div class="favi" style="width:48px;height:48px;color:var(--accent)">
+      <svg class="mk" width="34" height="34" viewBox="0 0 64 64"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="6" stroke-linecap="round"/><path d="M41.0 25.69 A11 11 0 1 0 41.0 38.31" stroke-width="5" stroke-linecap="round" style="opacity:.5"/></svg></div><span class="lbl">focus var.</span></div>
+  </div>
+
+  <!-- COLOR OPTIONS -->
+  <h2 class="sec">Accent color — pick the “Claresso blue”</h2>
+  <div class="swatches">
+    <div class="sw"><span class="dot" style="background:#2f6bff"></span><div class="info"><b>Azure (default)</b><span>#2F6BFF · clear + trustworthy</span></div></div>
+    <div class="sw"><span class="dot" style="background:#5b5bf0"></span><div class="info"><b>Indigo</b><span>#5B5BF0 · the Vantage layout tone</span></div></div>
+    <div class="sw"><span class="dot" style="background:#0ea5a4"></span><div class="info"><b>Teal</b><span>#0EA5A4 · calmer, “clarity/water”</span></div></div>
+    <div class="sw"><span class="dot" style="background:#111827"></span><div class="info"><b>Ink-only</b><span>#111827 · monochrome, austere</span></div></div>
+  </div>
+</div>
+</body>
+</html>

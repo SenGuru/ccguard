@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCGuard · landing direction — 5 variants</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0c1320;--ink-2:#5a6478;--line:#e6e9f0;--bg:#f4f6fa;--accent:#2454ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif}
+  header{padding:34px 36px 10px}
+  h1{font-family:"Space Grotesk";font-weight:700;letter-spacing:-.02em;font-size:24px;margin:0}
+  .sub{color:var(--ink-2);font-size:15px;margin-top:8px;max-width:80ch}
+  .meta{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-2);margin-top:6px}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:26px;padding:24px 36px 56px}
+  @media(min-width:1500px){.grid{grid-template-columns:repeat(3,1fr)}}
+  .cell{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 14px 34px -24px rgba(16,24,52,.3)}
+  .cap{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .cap .n{font-family:"Space Grotesk";font-weight:700;font-size:15px}
+  .cap .tag{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-2)}
+  .cap a{margin-left:auto;font-size:12.5px;color:var(--accent);text-decoration:none;font-weight:600}
+  .frame{position:relative;height:430px;overflow:hidden;background:#fff}
+  .frame iframe{position:absolute;top:0;left:0;width:1340px;height:1640px;border:0;transform:scale(.418);transform-origin:top left}
+  .frame .click{position:absolute;inset:0;cursor:pointer}
+  .desc{padding:12px 16px;color:var(--ink-2);font-size:13px;line-height:1.5;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <h1>CCGuard → landing direction · 5 variants</h1>
+  <p class="sub">One aesthetic family — clean modern devtool (Linear / Vercel / Stripe). Five identities, accents, layouts, and name candidates. Click any to open full. All copy/data is placeholder-real (reflects the shipped product).</p>
+  <p class="meta">// audience: IT · security · compliance · eng leadership — legitimate governance, not surveillance</p>
+</header>
+<div class="grid">
+  <div class="cell">
+    <div class="cap"><span class="n">1 · Aperture</span><span class="tag">cobalt · Space Grotesk</span><a href="01-aperture.html" target="_blank">open ↗</a></div>
+    <div class="frame"><iframe src="01-aperture.html" scrolling="no"></iframe><a class="click" href="01-aperture.html" target="_blank"></a></div>
+    <div class="desc">Centered Stripe-style hero, visibility-first. "See every line of code your AI tools write."</div>
+  </div>
+  <div class="cell">
+    <div class="cap"><span class="n">2 · Vantage</span><span class="tag">indigo · Sora/mono</span><a href="02-vantage.html" target="_blank">open ↗</a></div>
+    <div class="frame"><iframe src="02-vantage.html" scrolling="no"></iframe><a class="click" href="02-vantage.html" target="_blank"></a></div>
+    <div class="desc">Linear-style split hero + floating on-task dashboard. "The control plane for AI-assisted engineering."</div>
+  </div>
+  <div class="cell">
+    <div class="cap"><span class="n">3 · Warden</span><span class="tag">green · Jakarta</span><a href="03-warden.html" target="_blank">open ↗</a></div>
+    <div class="frame"><iframe src="03-warden.html" scrolling="no"></iframe><a class="click" href="03-warden.html" target="_blank"></a></div>
+    <div class="desc">Vanta/Drata enterprise-compliance energy, trust strip + fleet KPI card. "Prove your AI coding is safe, compliant, and on-task."</div>
+  </div>
+  <div class="cell">
+    <div class="cap"><span class="n">4 · Tract</span><span class="tag">serif + mono · editorial</span><a href="04-tract.html" target="_blank">open ↗</a></div>
+    <div class="frame"><iframe src="04-tract.html" scrolling="no"></iframe><a class="click" href="04-tract.html" target="_blank"></a></div>
+    <div class="desc">Most design-forward — Fraunces serif, max whitespace, rust accent. "Govern AI coding without getting in the way."</div>
+  </div>
+  <div class="cell">
+    <div class="cap"><span class="n">5 · Verity</span><span class="tag">cyan · mono-heavy console</span><a href="05-verity.html" target="_blank">open ↗</a></div>
+    <div class="frame"><iframe src="05-verity.html" scrolling="no"></iframe><a class="click" href="05-verity.html" target="_blank"></a></div>
+    <div class="desc">Command-center / live console aesthetic, dark telemetry band. "The control plane for the code your AI writes."</div>
+  </div>
+</div>
+</body>
+</html>

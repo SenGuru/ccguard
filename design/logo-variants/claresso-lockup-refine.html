@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claresso — lockup refinement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#0f1422;--ink-2:#5a6478;--ink-3:#9aa2b4;--accent:#2f6bff;--line:#e8ebf2;--bg:#f5f7fb;--paper:#fff;--night:#0d1220}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:15px}
+  .wrap{max-width:1060px;margin:0 auto;padding:40px 32px 80px}
+  h1{font-family:Sora;font-weight:700;letter-spacing:-.02em;font-size:24px;margin:0}
+  .sub{color:var(--ink-2);margin-top:8px;max-width:80ch;line-height:1.5}
+  h2.sec{font-family:Sora;font-weight:600;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:38px 0 14px;border-top:1px solid var(--line);padding-top:18px}
+
+  /* the integrated lockup — mark IS the capital C */
+  .lk{display:inline-flex;align-items:flex-end;color:var(--ink);line-height:1}
+  .lk .m{color:var(--accent);width:auto;display:block}
+  .lk .t{font-family:Sora;font-weight:600;letter-spacing:-.035em;line-height:.8}
+  .lk .m path{fill:none;stroke:currentColor}
+
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:40px 36px;margin-bottom:18px}
+  .card.dk{background:var(--night)}
+  .card.dk .lk{color:#fff} .card.dk .lk .m{color:#5b87ff}
+  .lbl{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-3);margin-bottom:18px}
+  .card.dk .lbl{color:#5a6478}
+  .three{display:grid;gap:0}
+  .three .opt{display:flex;align-items:center;gap:26px;padding:26px 0;border-bottom:1px dashed var(--line)}
+  .three .opt:last-child{border-bottom:0}
+  .three .tag{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-3);width:130px;flex:none}
+
+  .smallrow{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;background:#fff}
+  .chiplbl{font-family:"JetBrains Mono";font-size:10px;color:var(--ink-3)}
+  .tile{display:grid;place-items:center;border-radius:13px;background:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Claresso · lockup refinement</h1>
+  <p class="sub">Tightening the integrated <b>mark-as-C</b> so it reads as one word. Three closeness levels below — the “l” nestles into the aperture-C’s opening. Pick the spacing that feels right; side lockup shown last for comparison.</p>
+
+  <!-- THREE TIGHTNESS OPTIONS -->
+  <h2 class="sec">Mark-as-C · how close?</h2>
+  <div class="card">
+    <div class="three">
+      <div class="opt">
+        <span class="tag">A · mild</span>
+        <span class="lk" style="font-size:62px">
+          <svg class="m" viewBox="0 0 64 64" style="height:.86em;margin-right:-.05em;margin-bottom:.02em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+          <span class="t">laresso</span>
+        </span>
+      </div>
+      <div class="opt">
+        <span class="tag">B · close ⭐</span>
+        <span class="lk" style="font-size:62px">
+          <svg class="m" viewBox="0 0 64 64" style="height:.9em;margin-right:-.14em;margin-bottom:.0em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+          <span class="t">laresso</span>
+        </span>
+      </div>
+      <div class="opt">
+        <span class="tag">C · tightest</span>
+        <span class="lk" style="font-size:62px">
+          <svg class="m" viewBox="0 0 64 64" style="height:.95em;margin-right:-.2em;margin-bottom:-.02em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+          <span class="t">laresso</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- chosen (B) on light + dark -->
+  <h2 class="sec">Option B · on light &amp; dark</h2>
+  <div class="card">
+    <div class="lbl">light background</div>
+    <span class="lk" style="font-size:72px">
+      <svg class="m" viewBox="0 0 64 64" style="height:.9em;margin-right:-.14em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+      <span class="t">laresso</span>
+    </span>
+  </div>
+  <div class="card dk">
+    <div class="lbl">dark background</div>
+    <span class="lk" style="font-size:72px">
+      <svg class="m" viewBox="0 0 64 64" style="height:.9em;margin-right:-.14em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+      <span class="t">laresso</span>
+    </span>
+  </div>
+
+  <!-- side lockup comparison -->
+  <h2 class="sec">For comparison · side lockup (02)</h2>
+  <div class="card">
+    <span class="lk" style="font-size:60px;gap:.34em;align-items:center">
+      <svg class="m" viewBox="0 0 64 64" style="height:.9em"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke-width="7" stroke-linecap="round"/></svg>
+      <span class="t" style="letter-spacing:-.02em">Claresso</span>
+    </span>
+  </div>
+
+  <!-- small sizes -->
+  <h2 class="sec">Mark at small sizes (favicon / app icon)</h2>
+  <div class="card">
+    <div class="smallrow">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px"><div class="chip" style="width:48px;height:48px;color:var(--accent)"><svg viewBox="0 0 64 64" width="32" height="32" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="9" stroke-linecap="round"/></svg></div><span class="chiplbl">32</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px"><div class="chip" style="width:32px;height:32px;color:var(--accent)"><svg viewBox="0 0 64 64" width="18" height="18" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="10" stroke-linecap="round"/></svg></div><span class="chiplbl">16</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px"><div class="tile" style="width:48px;height:48px"><svg viewBox="0 0 64 64" width="30" height="30" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="#fff" stroke-width="8" stroke-linecap="round"/></svg></div><span class="chiplbl">app tile</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px"><div class="chip" style="width:48px;height:48px;background:var(--night);border-color:#1c2333;color:#fff"><svg viewBox="0 0 64 64" width="30" height="30" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg></div><span class="chiplbl">reverse</span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

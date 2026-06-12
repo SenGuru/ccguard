@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claresso — the platform</title>
+<link rel="icon" href="../brand/claresso-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav><div class="wrap nav-in">
+  <a class="brand" href="index.html"><svg class="logo-mk" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</a>
+  <div class="nav-links"><a class="on" href="platform.html">Platform</a><a href="security.html">Security</a><a href="pricing.html">Pricing</a><a href="#">Docs</a></div>
+  <div class="nav-right"><a class="link-sm" href="#">Sign in</a><a class="btn btn-primary" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="subhero wrap">
+  <div class="glow"></div>
+  <span class="pill"><span class="dot"></span>The platform</span>
+  <h1 class="title">Everything you need to govern AI coding — in one platform.</h1>
+  <p class="sub">Capture every session verbatim, investigate what's sensitive, enforce policy across the fleet, and prove it stayed on-task — the whole lifecycle of company-provided AI coding, in one place.</p>
+</header>
+
+<!-- ① Capture & Replay — text left, panel right -->
+<section class="split wrap">
+  <div>
+    <div class="eyebrow">Capture</div>
+    <h2>A complete, replayable record of every session.</h2>
+    <p class="lead">Claresso reconstructs each AI-coding session in full and replays it event by event — the prompt, the response, every tool call, and every file diff, exactly as they happened.</p>
+    <div class="list">
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Verbatim prompts, responses, tool-calls &amp; diffs</b><span>Nothing summarized away — the literal record, captured per session and replayable end to end.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Works with telemetry off</b><span>The endpoint record is reconstructed from disk, so there's no blind spot when vendor telemetry is disabled.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Subagent traces included</b><span>Spawned subagents are captured in the same timeline, so nested work is never invisible.</span></div></div>
+    </div>
+  </div>
+  <div class="panel"><div class="panel-in">
+    <div class="pbar"><span class="gd"></span>Session replay · acme/deployer</div>
+    <div class="compliance">
+      <div class="tl">
+        <div class="ev"><div class="k">user&nbsp;prompt</div><div class="c">Help me wire the deploy. Use AWS key AKIA…7EXAMPLE and ship the PROJ-7 rollout.</div></div>
+        <div class="ev flag"><div class="k">finding</div><div><div class="flagrow"><span class="tag sec">secret · aws_access_key</span><span class="tag sec">pii · email</span></div><div class="c">redacted: AKIA…LE — surfaced inline, raw never stored</div></div></div>
+        <div class="ev"><div class="k">tool · bash</div><div class="c">$ git commit -m "deploy script" &amp;&amp; gh pr create</div></div>
+        <div class="ev"><div class="k">assistant</div><div class="c">Opened PR #214. On-task: 88 — commit landed, references PROJ-7.</div></div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ② Findings & eDiscovery — panel left, text right -->
+<section class="split wrap">
+  <div class="panel"><div class="panel-in">
+    <div class="pbar"><span class="gd"></span>Findings · acme corpus</div>
+    <div class="compliance">
+      <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--line-2);border-radius:9px;margin-bottom:12px;color:var(--ink-3);font-size:13px;background:#fcfdff">🔎&nbsp;<span style="font-family:'JetBrains Mono';font-size:12.5px">search captured content…</span></div>
+      <div class="crow"><div class="who"><b>aws_access_key</b><span>session 4f1a · dana@acme.com · redacted AKIA…LE</span></div><span class="badge b-bad">high</span></div>
+      <div class="crow"><div class="who"><b>email</b><span>session 4f1a · dana@acme.com · redacted d…@acme.com</span></div><span class="badge b-warn">medium</span></div>
+      <div class="crow"><div class="who"><b>private_key</b><span>session 0c93 · sam@acme.com · redacted -----BEGIN…</span></div><span class="badge b-bad">high</span></div>
+      <div style="margin-top:14px;padding:13px;border:1px dashed var(--line);border-radius:10px;display:flex;justify-content:space-between;align-items:center">
+        <div><b style="font-size:13.5px">Legal hold active</b><div style="font-size:12px;color:var(--ink-3)">Matter ACME-2026-014 · 38 sessions held</div></div>
+        <div style="font-family:'Space Grotesk';font-weight:600;font-size:13px;color:var(--accent-ink)">Export NDJSON →</div>
+      </div>
+    </div>
+  </div></div>
+  <div>
+    <div class="eyebrow">Investigate</div>
+    <h2>Search everything. Surface what's sensitive.</h2>
+    <p class="lead">Run full-text search across the entire captured corpus, let Claresso flag the secrets and PII automatically, and hand counsel a defensible export when they ask.</p>
+    <div class="list">
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Full-text search across the corpus</b><span>Query every prompt, response, tool call, and diff ever captured — one searchable system of record.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Automatic secret &amp; PII findings (redacted)</b><span>Findings store a redacted preview only — the raw secret never lands in the index.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Legal hold + one-click NDJSON export</b><span>Place a hold on a matter and export the complete record as NDJSON for audit or counsel in a single action.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ③ Enforcement & Fleet — text left, panel right -->
+<section class="split wrap">
+  <div>
+    <div class="eyebrow">Enforce</div>
+    <h2>Push policy. Prove every endpoint obeys it.</h2>
+    <p class="lead">Ship a managed policy through your MDM that forces the agent on and locks logins to your org — then watch every endpoint continuously attest it's intact.</p>
+    <div class="list">
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Managed-settings forces the agent &amp; locks login</b><span>The highest-precedence config forces telemetry plus the agent on and locks login to your org — users can't override it.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Continuous attestation</b><span>Every device reports compliant, drifted, or tampered — the moment its state changes.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>MDM-deployed, tamper-detected</b><span>Deploy via Intune, Jamf, or your MDM; tampering surfaces in the console the instant it's attempted.</span></div></div>
+    </div>
+  </div>
+  <div class="panel"><div class="panel-in">
+    <div class="pbar"><span class="gd"></span>Fleet compliance · 3 devices</div>
+    <div class="compliance">
+      <div class="crow"><div class="who"><b>WS-ENG-07</b><span>dana@acme.com · macOS</span></div><span class="badge b-ok">compliant</span></div>
+      <div class="crow"><div class="who"><b>WS-MKT-02</b><span>sam@acme.com · windows</span></div><span class="badge b-warn">drifted</span></div>
+      <div class="crow"><div class="who"><b>LAPTOP-14</b><span>unmanaged · windows</span></div><span class="badge b-bad">tampered</span></div>
+      <div style="margin-top:14px;padding:13px;border:1px dashed var(--line);border-radius:10px;display:flex;justify-content:space-between;align-items:center">
+        <div><b style="font-size:13.5px">On-task this week</b><div style="font-size:12px;color:var(--ink-3)">142 sessions scored</div></div>
+        <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--accent-ink)">86%</div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ④ On-task & Roles — panel left, text right -->
+<section class="split wrap">
+  <div class="panel"><div class="panel-in">
+    <div class="pbar"><span class="gd"></span>On-task &amp; review queue</div>
+    <div class="compliance">
+      <div style="padding:18px 16px;border:1px solid var(--line-2);border-radius:10px;margin-bottom:14px;background:#fcfdff;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:'Space Grotesk';font-weight:700;font-size:44px;line-height:1;color:var(--accent-ink)">86%</div>
+          <div style="font-size:12.5px;color:var(--ink-3);margin-top:6px">on-task · 142 sessions scored</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:'Space Grotesk';font-weight:600;font-size:13px;color:var(--ink-2)">commit · PR · ticket</div>
+          <div style="font-size:12px;color:var(--ink-3);margin-top:4px">signals weighted per repo</div>
+        </div>
+      </div>
+      <h4 style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-family:Inter;font-weight:600;margin:0 0 10px">Review queue</h4>
+      <div class="crow"><div class="who"><b>non_engineer_coding</b><span>sam@acme.com · WS-MKT-02</span></div><span class="badge b-warn">open</span></div>
+      <div class="crow"><div class="who"><b>personal_repo</b><span>dana@acme.com · company time</span></div><span class="badge b-warn">open</span></div>
+    </div>
+  </div></div>
+  <div>
+    <div class="eyebrow">Score</div>
+    <h2>Know it's on-task — judged on what shipped.</h2>
+    <p class="lead">Claresso scores each session on the signals that matter to the business — not keystrokes — and routes role-aware anomalies to a review queue for a human, not a punishment.</p>
+    <div class="list">
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Score on commit / PR / ticket signals</b><span>Did work land in a commit, survive to a merged PR, map to a ticket? That's the score — judged on what shipped.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Per-repo work definitions</b><span>Override the default per repo so "looks unrelated but is related" is handled the way your org actually works.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Role-aware review queue</b><span>A marketer shipping heavy code or a personal repo on company time becomes an indicator a human reviews — not punishment.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="band">
+    <h2>See the whole platform on your own fleet.</h2>
+    <p>Stand up Claresso against your own Claude Code fleet and watch capture, findings, enforcement, and on-task come together. No agent rewrites, no developer friction.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#">Book a demo</a>
+      <a class="btn btn-ghost" href="#">Read the docs</a>
+    </div>
+  </div>
+</div>
+
+<footer class="wrap">
+  <div class="footgrid">
+    <div class="footbrand">
+      <div class="brand"><svg class="logo-mk" style="width:20px;height:20px" viewBox="0 0 64 64" fill="none"><path d="M48.38 20.53 A20 20 0 1 0 48.38 43.47" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>Claresso</div>
+      <p>Clarity over the code your AI writes. Governance for company-provided AI coding tools.</p>
+    </div>
+    <div class="col"><h5>Product</h5><a href="platform.html">Platform</a><a href="security.html">Security</a><a href="pricing.html">Pricing</a><a href="#">Changelog</a></div>
+    <div class="col"><h5>Company</h5><a href="#">About</a><a href="#">Careers</a><a href="#">Contact</a></div>
+    <div class="col"><h5>Resources</h5><a href="#">Docs</a><a href="#">Blog</a><a href="#">Status</a></div>
+    <div class="col"><h5>Legal</h5><a href="#">Privacy</a><a href="#">Terms</a><a href="#">DPA</a></div>
+  </div>
+  <div class="footbot">
+    <div>© 2026 Claresso · Governance for AI-assisted engineering</div>
+    <div>Made for the people accountable for AI risk.</div>
+  </div>
+</footer>
+
+</body>
+</html>

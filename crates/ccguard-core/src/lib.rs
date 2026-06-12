@@ -9,6 +9,7 @@ pub mod event;
 pub mod findings;
 pub mod gaming;
 pub mod ledger;
+pub mod lexicon;
 pub mod ontask;
 pub mod policy_draft;
 pub mod policy_health;

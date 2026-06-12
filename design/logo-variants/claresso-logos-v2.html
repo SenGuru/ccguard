@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claresso — logo exploration · round 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&family=Hanken+Grotesk:wght@600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0f1422; --ink-2:#5a6478; --ink-3:#9aa2b4;
+    --accent:#2f6bff; --accent-deep:#1e47c8; --accent-soft:#eaf0ff;
+    --line:#e8ebf2; --bg:#f5f7fb; --paper:#fff; --night:#0d1220;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 32px 80px}
+  h1{font-family:"Space Grotesk";font-weight:700;letter-spacing:-.02em;font-size:26px;margin:0}
+  .sub{color:var(--ink-2);margin-top:8px;max-width:82ch;line-height:1.5}
+  .mk path,.mk line,.mk rect,.mk circle,.mk polyline{vector-effect:non-scaling-stroke}
+  h2.sec{font-family:"Space Grotesk";font-weight:600;font-size:14px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:40px 0 16px;border-top:1px solid var(--line);padding-top:20px}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .stage{padding:42px 30px 30px;display:flex;flex-direction:column;align-items:center;gap:24px}
+  .lockup{display:flex;align-items:center;gap:15px}
+  .word{font-family:"Sora";font-weight:600;letter-spacing:-.02em;font-size:34px;color:var(--ink);line-height:1}
+  .word.sp{font-family:"Space Grotesk";letter-spacing:-.025em}
+  .row{display:flex;align-items:center;gap:18px}
+  .favbox{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);border-radius:9px}
+  .favlbl{font-family:"JetBrains Mono";font-size:10px;color:var(--ink-3)}
+  .tile{display:grid;place-items:center;border-radius:14px;background:var(--accent)}
+  .cap{padding:15px 18px;border-top:1px solid var(--line)}
+  .cap .nm{font-family:"Space Grotesk";font-weight:600;font-size:14px}
+  .cap .meta{color:var(--ink-2);font-size:12.5px;margin-top:3px;line-height:1.45}
+  .cap .sig{margin-top:8px;font-size:11.5px}
+  .cap .sig b{color:var(--accent-deep)}
+  .smallset{display:flex;align-items:center;gap:12px;margin-top:2px}
+
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Claresso · logo exploration <span style="color:var(--ink-3)">round 2</span></h1>
+  <p class="sub">Five different <i>ideas</i> (not just type swaps). Each is vector, single-color-safe, and favicon-tested. Accent shown in Azure but swappable. Numbered 07–11 to continue from round 1.</p>
+
+  <h2 class="sec">5 new directions</h2>
+  <div class="grid">
+
+    <!-- 07 Bracket-C (code) -->
+    <div class="card">
+      <div class="stage">
+        <div class="row">
+          <svg class="mk" width="58" height="58" viewBox="0 0 64 64" fill="none" style="color:var(--accent)"><path d="M45 16 H29 a5 5 0 0 0 -5 5 V43 a5 5 0 0 0 5 5 H45" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>
+        </div>
+        <div class="lockup">
+          <svg class="mk" width="34" height="34" viewBox="0 0 64 64" fill="none" style="color:var(--accent)"><path d="M45 16 H29 a5 5 0 0 0 -5 5 V43 a5 5 0 0 0 5 5 H45" stroke="currentColor" stroke-width="8" stroke-linecap="round"/></svg>
+          <span class="word">Claresso</span>
+        </div>
+        <div class="smallset">
+          <div class="favbox" style="color:var(--accent)"><svg class="mk" width="20" height="20" viewBox="0 0 64 64" fill="none"><path d="M45 16 H29 a5 5 0 0 0 -5 5 V43 a5 5 0 0 0 5 5 H45" stroke="currentColor" stroke-width="10" stroke-linecap="round"/></svg></div>
+          <div class="favbox" style="color:var(--ink)"><svg class="mk" width="20" height="20" viewBox="0 0 64 64" fill="none"><path d="M45 16 H29 a5 5 0 0 0 -5 5 V43 a5 5 0 0 0 5 5 H45" stroke="currentColor" stroke-width="9" stroke-linecap="round"/></svg></div>
+          <span class="favlbl">favicon · 1-color</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">07 · Bracket-C (code)</div><div class="meta">The “C” as a squared code bracket — instantly reads <i>developer tool</i> while still being the letter C. Native to the audience.</div><div class="sig"><b>Signals:</b> code, precision, devtool-native. <b>Rejects:</b> soft/consumer.</div></div>
+    </div>
+
+    <!-- 08 Prism -->
+    <div class="card">
+      <div class="stage">
+        <div class="row">
+          <svg class="mk" width="62" height="62" viewBox="0 0 64 64" fill="none" style="color:var(--accent)">
+            <path d="M32 15 L49 45 L15 45 Z" stroke="currentColor" stroke-width="5.5" stroke-linejoin="round"/>
+            <line x1="6" y1="38" x2="24" y2="38" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+            <line x1="40" y1="33" x2="59" y2="27" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+            <line x1="41" y1="38" x2="60" y2="38" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".6"/>
+            <line x1="40" y1="43" x2="59" y2="49" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".4"/>
+          </svg>
+        </div>
+        <div class="lockup">
+          <svg class="mk" width="36" height="36" viewBox="0 0 64 64" fill="none" style="color:var(--accent)"><path d="M32 15 L49 45 L15 45 Z" stroke="currentColor" stroke-width="5.5" stroke-linejoin="round"/><line x1="9" y1="38" x2="24" y2="38" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><line x1="40" y1="34" x2="56" y2="29" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".8"/><line x1="41" y1="38" x2="57" y2="38" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".5"/></svg>
+          <span class="word">Claresso</span>
+        </div>
+        <div class="smallset">
+          <div class="favbox" style="color:var(--accent)"><svg class="mk" width="22" height="22" viewBox="0 0 64 64" fill="none"><path d="M32 16 L49 46 L15 46 Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/></svg></div>
+          <span class="favlbl">favicon = prism only</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">08 · Prism (light → clarity)</div><div class="meta">Clarity literally = light resolved through a prism. A beam goes in, clean separated rays come out. Optical, distinctive, not an icon anyone else owns.</div><div class="sig"><b>Signals:</b> clarity, optics, transformation. <b>Rejects:</b> generic ring/dot marks.</div></div>
+    </div>
+
+    <!-- 09 Focus frame (viewfinder) -->
+    <div class="card">
+      <div class="stage">
+        <div class="row">
+          <svg class="mk" width="60" height="60" viewBox="0 0 64 64" fill="none" style="color:var(--accent)">
+            <path d="M18 28 V21 a3 3 0 0 1 3 -3 H28" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M36 18 H43 a3 3 0 0 1 3 3 V28" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M46 36 V43 a3 3 0 0 1 -3 3 H36" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M28 46 H21 a3 3 0 0 1 -3 -3 V36" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="32" cy="32" r="4.5" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="lockup">
+          <svg class="mk" width="36" height="36" viewBox="0 0 64 64" fill="none" style="color:var(--accent)"><path d="M18 28 V21 a3 3 0 0 1 3 -3 H28" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M36 18 H43 a3 3 0 0 1 3 3 V28" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M46 36 V43 a3 3 0 0 1 -3 3 H36" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M28 46 H21 a3 3 0 0 1 -3 -3 V36" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
+          <span class="word">Claresso</span>
+        </div>
+        <div class="smallset">
+          <div class="favbox" style="color:var(--accent)"><svg class="mk" width="22" height="22" viewBox="0 0 64 64" fill="none"><path d="M18 28 V20 H26" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M38 18 H46 V26" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M46 38 V46 H38" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M26 46 H18 V38" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="32" r="5" fill="currentColor"/></svg></div>
+          <span class="favlbl">favicon · 1-color</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">09 · Focus frame (viewfinder)</div><div class="meta">Camera focus brackets snapping onto a point — “bring it into focus / in frame.” Reads <i>visibility</i> without an eye. Very devtool/precision.</div><div class="sig"><b>Signals:</b> focus, in-frame, oversight. <b>Rejects:</b> surveillance / eye imagery.</div></div>
+    </div>
+
+    <!-- 10 Facet gem -->
+    <div class="card">
+      <div class="stage">
+        <div class="row">
+          <svg class="mk" width="58" height="58" viewBox="0 0 64 64" fill="none" style="color:var(--accent)">
+            <path d="M32 12 L51 30 L32 53 L13 30 Z" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/>
+            <path d="M22 24 H42" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+            <path d="M22 24 L32 53 M42 24 L32 53" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" opacity=".55"/>
+          </svg>
+        </div>
+        <div class="lockup">
+          <svg class="mk" width="34" height="34" viewBox="0 0 64 64" fill="none" style="color:var(--accent)"><path d="M32 12 L51 30 L32 53 L13 30 Z" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M22 24 H42" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+          <span class="word">Claresso</span>
+        </div>
+        <div class="smallset">
+          <div class="favbox" style="color:var(--accent)"><svg class="mk" width="22" height="22" viewBox="0 0 64 64" fill="none"><path d="M32 13 L51 30 L32 52 L13 30 Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/></svg></div>
+          <span class="favlbl">favicon = facet only</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">10 · Clarity facet</div><div class="meta">Clarity as a cut, clear gemstone — the facet/table of a flawless stone. The most premium, least “tech-startup” route.</div><div class="sig"><b>Signals:</b> clarity, precision, premium. <b>Rejects:</b> casual, throwaway.</div></div>
+    </div>
+
+    <!-- 11 Negative-space tile -->
+    <div class="card">
+      <div class="stage">
+        <div class="row">
+          <div class="tile" style="width:64px;height:64px">
+            <svg class="mk" width="38" height="38" viewBox="0 0 64 64" fill="none"><path d="M46 23 A13 13 0 1 0 46 41" stroke="#fff" stroke-width="7" stroke-linecap="round"/></svg>
+          </div>
+          <div class="tile" style="width:64px;height:64px;background:var(--night)">
+            <svg class="mk" width="38" height="38" viewBox="0 0 64 64" fill="none"><path d="M46 23 A13 13 0 1 0 46 41" stroke="#5b87ff" stroke-width="7" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+        <div class="lockup">
+          <div class="tile" style="width:38px;height:38px;border-radius:9px"><svg class="mk" width="24" height="24" viewBox="0 0 64 64" fill="none"><path d="M46 23 A13 13 0 1 0 46 41" stroke="#fff" stroke-width="8" stroke-linecap="round"/></svg></div>
+          <span class="word">Claresso</span>
+        </div>
+        <div class="smallset">
+          <div class="tile" style="width:30px;height:30px;border-radius:7px"><svg class="mk" width="19" height="19" viewBox="0 0 64 64" fill="none"><path d="M46 23 A13 13 0 1 0 46 41" stroke="#fff" stroke-width="9" stroke-linecap="round"/></svg></div>
+          <div class="tile" style="width:18px;height:18px;border-radius:5px"><svg class="mk" width="12" height="12" viewBox="0 0 64 64" fill="none"><path d="M46 23 A13 13 0 1 0 46 41" stroke="#fff" stroke-width="11" stroke-linecap="round"/></svg></div>
+          <span class="favlbl">app icon · 32 · 16</span>
+        </div>
+      </div>
+      <div class="cap"><div class="nm">11 · Negative-space tile</div><div class="meta">The aperture-C knocked out of a solid tile — an app-icon-first identity. Boldest, most “product,” strongest at the smallest sizes.</div><div class="sig"><b>Signals:</b> product, bold, modern. <b>Rejects:</b> delicate line-mark.</div></div>
+    </div>
+  </div>
+
+  <p class="sub" style="margin-top:30px">Round 1 (the aperture-ring system) is still on the table: <span class="mono" style="font-family:JetBrains Mono;font-size:12px">claresso-logos.html</span>. Tell me which concept(s) to push — I can also blend (e.g. “the prism, but as the negative-space tile”).</p>
+</div>
+</body>
+</html>

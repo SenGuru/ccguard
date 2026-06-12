@@ -60,6 +60,10 @@ struct Args {
     /// (triage) Max sessions to classify in one run (bounds per-run quota). Default: 25.
     #[arg(long, default_value_t = 25)]
     triage_limit: u32,
+    /// (triage) Bypass the idle-gate and backoff — run the sweep now even if Claude
+    /// Code is active. For testing / an explicit admin-triggered run.
+    #[arg(long)]
+    force: bool,
     /// Attestation mode: enroll this device, fetch the expected policy, evaluate the on-disk
     /// managed-settings, and POST the attestation to /v1/attest. Takes priority over harvest modes.
     #[arg(long)]
@@ -293,16 +297,18 @@ fn run_triage(
     let iso = now.iso_week();
     let week = format!("{}-W{:02}", iso.year(), iso.week());
 
-    if st.in_backoff(now_epoch) {
+    if !args.force && st.in_backoff(now_epoch) {
         println!("CCGuard agent: triage backing off (rate-limited recently); skipping this run.");
         return Ok(());
     }
     // Idle-gate: if Claude Code was touched in the last few minutes, the dev is
-    // working — defer the whole sweep, interactive latency is sacred.
-    if let Some(secs) = seconds_since_active(claude_dir) {
-        if secs < IDLE_GATE_SECS {
-            println!("CCGuard agent: Claude Code active {secs}s ago — deferring triage sweep.");
-            return Ok(());
+    // working — defer the whole sweep, interactive latency is sacred. (--force skips it.)
+    if !args.force {
+        if let Some(secs) = seconds_since_active(claude_dir) {
+            if secs < IDLE_GATE_SECS {
+                println!("CCGuard agent: Claude Code active {secs}s ago — deferring triage sweep (use --force to override).");
+                return Ok(());
+            }
         }
     }
 

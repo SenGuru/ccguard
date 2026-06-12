@@ -26,6 +26,25 @@ use crate::triage_client::{self, TriageClientError};
 /// Max prompts / touched-files fed to the judge per session (bounds cost + content).
 const MAX_PROMPTS: i64 = 12;
 const MAX_TARGETS: i64 = 20;
+/// Evidence-channel caps (bounds prompt size; every channel degrades gracefully to empty).
+const MAX_ASSISTANT_SNIPPETS: i64 = 2; // head snippets (+1 tail below)
+const MAX_OUTCOMES: i64 = 5;
+const MAX_RELATED: i64 = 5;
+const LEXICON_TERMS: usize = 15;
+const MAX_WORK_DOCS: i64 = 40;
+const MAX_BACKGROUND_DOCS: i64 = 120;
+/// A cwd shared by more than this many sessions is a hub (e.g. the home dir) and
+/// carries no continuity signal.
+const CWD_HUB_LIMIT: i64 = 10;
+
+/// SQL predicate excluding harness-injected "prompts" that are not the developer's
+/// words (pasted skill bodies, local-command caveats, system reminders). They'd
+/// pollute the judge's view of the session AND poison the learned work lexicon
+/// (skill boilerplate scoring as "distinctive work vocabulary").
+const NOT_BOILERPLATE: &str = "b.content not like '<local-command-caveat%' \
+    and b.content not like 'Base directory for this skill%' \
+    and b.content not like '<command-name>%' \
+    and b.content not like '<system-reminder%'";
 
 /// Tenant triage settings.
 #[derive(Debug, Clone)]
@@ -166,13 +185,14 @@ pub async fn assemble_input(
         None => return Ok(None),
     };
 
-    // First developer prompts in seq order.
-    let prompt_rows = sqlx::query(
+    // First developer prompts in seq order (boilerplate-injected "prompts" excluded).
+    let prompt_rows = sqlx::query(&format!(
         "select b.content from captured_events e \
          join content_blobs b on b.tenant_id = e.tenant_id and b.sha256 = e.content_sha \
          where e.tenant_id = $1 and e.session_id = $2 and e.kind = 'user_prompt' \
+           and {NOT_BOILERPLATE} \
          order by e.seq limit $3",
-    )
+    ))
     .bind(tenant_id)
     .bind(session_id)
     .bind(MAX_PROMPTS)
@@ -184,12 +204,16 @@ pub async fn assemble_input(
         .filter(|s| !s.trim().is_empty())
         .collect();
 
-    // Touched files / shell targets (file_edit + tool_call), de-duped, first seen.
+    // Touched files / shell targets, de-duped. Real file edits rank before generic
+    // tool-call targets (web-search strings etc.) so they survive the cap.
     let target_rows = sqlx::query(
-        "select distinct target from captured_events \
-         where tenant_id = $1 and session_id = $2 \
-           and kind in ('file_edit','tool_call') and target is not null \
-         order by target limit $3",
+        "select target from ( \
+           select target, min(case when kind = 'file_edit' then 0 else 1 end) as pri \
+           from captured_events \
+           where tenant_id = $1 and session_id = $2 \
+             and kind in ('file_edit','tool_call') and target is not null \
+           group by target \
+         ) x order by pri, target limit $3",
     )
     .bind(tenant_id)
     .bind(session_id)
@@ -201,7 +225,7 @@ pub async fn assemble_input(
         .filter_map(|r| r.get::<Option<String>, _>("target"))
         .collect();
 
-    Ok(Some(TriageInput {
+    let mut input = TriageInput {
         repo_org: meta.get("repo_org"),
         repo_name: meta.get("repo_name"),
         repo_path: meta.get("repo_path"),
@@ -209,7 +233,210 @@ pub async fn assemble_input(
         title: meta.get("title"),
         prompts,
         tool_targets,
-    }))
+        ..Default::default()
+    };
+    gather_evidence(pool, tenant_id, session_id, &mut input).await?;
+    Ok(Some(input))
+}
+
+/// Fill the judge's evidence channels (assistant output, git/PR outcomes, related
+/// human-labeled sessions, learned work vocabulary + similarity). Every channel
+/// degrades to empty — evidence enriches the judge's view, never gates it.
+///
+/// Grounding rule: the related-session and lexicon channels read ONLY
+/// human-confirmed labels (`session_triage.human_reviewed`). AI labels would be
+/// circular (the judge amplifying its own guesses) and would churn the triage
+/// `input_digest` mid-sweep as verdicts post.
+async fn gather_evidence(
+    pool: &PgPool,
+    tenant_id: &str,
+    session_id: &str,
+    input: &mut TriageInput,
+) -> Result<(), sqlx::Error> {
+    // Channel 5: assistant output samples — head 2 + tail 1 (substance often lives
+    // in what was produced, not the developer's terse prompts).
+    let head = sqlx::query_scalar::<_, String>(
+        "select b.content from captured_events e \
+         join content_blobs b on b.tenant_id = e.tenant_id and b.sha256 = e.content_sha \
+         where e.tenant_id = $1 and e.session_id = $2 and e.kind = 'assistant_text' \
+           and b.content is not null and length(trim(b.content)) > 0 \
+         order by e.seq asc limit $3",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(MAX_ASSISTANT_SNIPPETS)
+    .fetch_all(pool)
+    .await?;
+    let tail = sqlx::query_scalar::<_, String>(
+        "select b.content from captured_events e \
+         join content_blobs b on b.tenant_id = e.tenant_id and b.sha256 = e.content_sha \
+         where e.tenant_id = $1 and e.session_id = $2 and e.kind = 'assistant_text' \
+           and b.content is not null and length(trim(b.content)) > 0 \
+         order by e.seq desc limit 1",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    let mut snippets = head;
+    for t in tail {
+        if !snippets.contains(&t) {
+            snippets.push(t);
+        }
+    }
+    input.assistant_snippets = snippets;
+
+    // Channel 4: git/PR outcomes — PR URLs seen in the session plus the structural
+    // provenance reason codes (push/remote evidence). Hardest channel to fake.
+    let prs = sqlx::query_scalar::<_, String>(
+        "select distinct target from captured_events \
+         where tenant_id = $1 and session_id = $2 and kind = 'pr' and target is not null \
+         limit $3",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(MAX_OUTCOMES)
+    .fetch_all(pool)
+    .await?;
+    let mut outcomes: Vec<String> = prs.into_iter().map(|u| format!("PR: {u}")).collect();
+    if let Some(reasons) = sqlx::query_scalar::<_, Option<String>>(
+        "select reasons from session_provenance where tenant_id = $1 and session_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten()
+    .filter(|r| !r.trim().is_empty())
+    {
+        outcomes.push(format!("structural provenance signals: {reasons}"));
+    }
+    input.outcomes = outcomes;
+
+    // Channel 3: continuity — human-labeled sessions sharing this one's working
+    // directory (unless it's a hub cwd) or sharing edited files.
+    let mut related: Vec<String> = sqlx::query(
+        "with me as ( \
+           select cwd from captured_sessions where tenant_id = $1 and session_id = $2 \
+             and cwd is not null and cwd <> '' \
+         ), hub as ( \
+           select count(*) as c from captured_sessions s join me on s.cwd = me.cwd \
+           where s.tenant_id = $1 \
+         ) \
+         select coalesce(nullif(s2.title,''),'(untitled)') as title, t2.human_label \
+         from captured_sessions s2 \
+         join me on s2.cwd = me.cwd \
+         join session_triage t2 on t2.tenant_id = s2.tenant_id and t2.session_id = s2.session_id \
+           and t2.human_reviewed and t2.human_label in ('work','personal') \
+         where s2.tenant_id = $1 and s2.session_id <> $2 \
+           and (select c from hub) <= $3 \
+         limit $4",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(CWD_HUB_LIMIT)
+    .bind(MAX_RELATED)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        let title: String = r.get("title");
+        let label: String = r.get("human_label");
+        format!("\"{title}\" — human-confirmed {} (shares working directory)", label.to_uppercase())
+    })
+    .collect();
+    if (related.len() as i64) < MAX_RELATED {
+        let by_files = sqlx::query(
+            "select distinct coalesce(nullif(s2.title,''),'(untitled)') as title, t2.human_label \
+             from captured_events e1 \
+             join captured_events e2 on e2.tenant_id = e1.tenant_id and e2.target = e1.target \
+               and e2.kind = 'file_edit' and e2.session_id <> e1.session_id \
+             join session_triage t2 on t2.tenant_id = e2.tenant_id and t2.session_id = e2.session_id \
+               and t2.human_reviewed and t2.human_label in ('work','personal') \
+             join captured_sessions s2 on s2.tenant_id = e2.tenant_id and s2.session_id = e2.session_id \
+             where e1.tenant_id = $1 and e1.session_id = $2 and e1.kind = 'file_edit' \
+               and e1.target is not null \
+             limit $3",
+        )
+        .bind(tenant_id)
+        .bind(session_id)
+        .bind(MAX_RELATED - related.len() as i64)
+        .fetch_all(pool)
+        .await?;
+        for r in &by_files {
+            let title: String = r.get("title");
+            let label: String = r.get("human_label");
+            let line =
+                format!("\"{title}\" — human-confirmed {} (edited the same files)", label.to_uppercase());
+            if !related.contains(&line) {
+                related.push(line);
+            }
+        }
+    }
+    input.related_sessions = related;
+
+    // Channel 2: learned work vocabulary + similarity, grounded in human-confirmed
+    // WORK sessions only. Docs are title + early prompts (bounded).
+    // Doc shape MUST be identical for work and background (title + first 6 real
+    // prompts) — asymmetric sampling inflates log-odds for long-prompt vocabulary.
+    let doc_body = format!(
+        "coalesce(( \
+           select string_agg(left(x.content, 400), ' ' order by x.seq) \
+           from (select e0.seq, b.content from captured_events e0 \
+                 join content_blobs b on b.tenant_id = e0.tenant_id and b.sha256 = e0.content_sha \
+                 where e0.tenant_id = s.tenant_id and e0.session_id = s.session_id \
+                   and e0.kind = 'user_prompt' and {NOT_BOILERPLATE} \
+                 order by e0.seq limit 6) x \
+         ), '')"
+    );
+    let work_docs = sqlx::query(&format!(
+        "select coalesce(nullif(s.title,''),'') as title, {doc_body} as body \
+         from captured_sessions s \
+         join session_triage t on t.tenant_id = s.tenant_id and t.session_id = s.session_id \
+         where s.tenant_id = $1 and s.session_id <> $2 \
+           and t.human_reviewed and t.human_label = 'work' \
+         order by s.last_ts desc nulls last limit $3",
+    ))
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(MAX_WORK_DOCS)
+    .fetch_all(pool)
+    .await?;
+    if !work_docs.is_empty() {
+        let titles: Vec<String> = work_docs.iter().map(|r| r.get::<String, _>("title")).collect();
+        let docs: Vec<String> = work_docs
+            .iter()
+            .map(|r| format!("{} {}", r.get::<String, _>("title"), r.get::<String, _>("body")))
+            .collect();
+        let background: Vec<String> = sqlx::query_scalar::<_, String>(&format!(
+            "select coalesce(nullif(s.title,''),'') || ' ' || {doc_body} \
+             from captured_sessions s \
+             where s.tenant_id = $1 and s.session_id <> $2 \
+               and not exists (select 1 from session_triage t \
+                 where t.tenant_id = s.tenant_id and t.session_id = s.session_id \
+                   and t.human_reviewed and t.human_label = 'work') \
+             order by s.last_ts desc nulls last limit $3",
+        ))
+        .bind(tenant_id)
+        .bind(session_id)
+        .bind(MAX_BACKGROUND_DOCS)
+        .fetch_all(pool)
+        .await?;
+
+        let lexicon = ccguard_core::lexicon::distinctive_terms(&docs, &background, LEXICON_TERMS);
+        let this_doc = format!(
+            "{} {} {}",
+            input.title.as_deref().unwrap_or(""),
+            input.prompts.join(" "),
+            input.tool_targets.join(" ")
+        );
+        input.work_term_hits = ccguard_core::lexicon::term_hits(&this_doc, &lexicon);
+        if let Some((sim, idx)) = ccguard_core::lexicon::nearest_work(&this_doc, &docs) {
+            input.work_similarity = Some(sim);
+            input.nearest_work_title = titles.get(idx).cloned().filter(|t| !t.is_empty());
+        }
+    }
+    Ok(())
 }
 
 /// The deterministic structural label for a session, read from the provenance

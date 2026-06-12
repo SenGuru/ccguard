@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aperture — visibility into AI-written code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0b1220; --ink-2:#46506a; --ink-3:#8a93a8;
+    --line:#e7eaf0; --line-2:#eef1f6; --bg:#ffffff; --bg-2:#f7f8fb;
+    --accent:#2454ff; --accent-ink:#1b3fcc; --accent-wash:#eef2ff;
+    --ok:#0e9f6e; --warn:#c98a00;
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:Inter,system-ui,sans-serif;font-size:16px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;font-weight:600;letter-spacing:-.02em;margin:0;text-wrap:balance}
+  p{margin:0;text-wrap:pretty}
+  a{color:inherit;text-decoration:none}
+  .mono{font-family:"JetBrains Mono",monospace}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+
+  /* nav */
+  nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.82);
+    backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;gap:32px;height:64px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:"Space Grotesk";font-weight:700;font-size:18px;letter-spacing:-.02em}
+  .glyph{width:22px;height:22px;border:2.5px solid var(--accent);border-radius:50%;position:relative;flex:none}
+  .glyph::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--accent)}
+  .nav-links{display:flex;gap:26px;margin-left:8px}
+  .nav-links a{color:var(--ink-2);font-size:14.5px;font-weight:500}
+  .nav-links a:hover{color:var(--ink)}
+  .nav-right{margin-left:auto;display:flex;align-items:center;gap:18px}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;
+    font-weight:550;font-size:14.5px;border:1px solid transparent;cursor:pointer;transition:.15s}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:var(--accent-ink)}
+  .btn-ghost{color:var(--ink);border-color:var(--line);background:#fff}
+  .btn-ghost:hover{border-color:#cfd5e2}
+  .link-sm{color:var(--ink-2);font-size:14.5px;font-weight:500}
+
+  /* hero */
+  .hero{text-align:center;padding:78px 0 8px}
+  .pill{display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 13px;border-radius:99px;
+    background:var(--accent-wash);color:var(--accent-ink);font-size:13px;font-weight:550;border:1px solid #dfe6ff}
+  .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  h1.title{font-size:60px;line-height:1.04;margin:24px auto 0;max-width:13ch}
+  .sub{font-size:19px;color:var(--ink-2);max-width:60ch;margin:22px auto 0;line-height:1.5}
+  .cta{display:flex;gap:12px;justify-content:center;margin-top:30px}
+  .cta .btn{height:46px;padding:0 22px;font-size:15px}
+  .micro{margin-top:14px;color:var(--ink-3);font-size:13px}
+
+  /* product shot */
+  .shot{margin:54px auto 0;max-width:1000px;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    box-shadow:0 1px 0 #fff inset, 0 30px 60px -30px rgba(16,24,52,.28), 0 8px 24px -16px rgba(16,24,52,.18)}
+  .shot-bar{display:flex;align-items:center;gap:14px;height:46px;padding:0 16px;border-bottom:1px solid var(--line-2);background:var(--bg-2)}
+  .traffic{display:flex;gap:7px}.traffic i{width:11px;height:11px;border-radius:50%;background:#dde2ec;display:block}
+  .shot-tabs{display:flex;gap:4px;font-size:13px;color:var(--ink-3)}
+  .shot-tabs span{padding:5px 11px;border-radius:7px}
+  .shot-tabs .on{background:#fff;color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+  .shot-body{display:grid;grid-template-columns:208px 1fr;min-height:380px;background:#fff}
+  .side{border-right:1px solid var(--line-2);padding:18px 14px;background:#fcfdff}
+  .side h4{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-family:Inter;font-weight:600;margin:0 0 10px}
+  .side a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--ink-2);font-size:13.5px;font-weight:500;margin-bottom:2px}
+  .side a.on{background:var(--accent-wash);color:var(--accent-ink)}
+  .side a .ic{width:15px;height:15px;border:1.6px solid currentColor;border-radius:4px;opacity:.7;flex:none}
+  .main{padding:22px 24px}
+  .crumb{font-size:12.5px;color:var(--ink-3)}
+  .main h3{font-size:19px;margin:6px 0 16px}
+  .tl{display:flex;flex-direction:column;gap:10px}
+  .ev{display:grid;grid-template-columns:96px 1fr;gap:14px;padding:12px 14px;border:1px solid var(--line-2);border-radius:10px}
+  .ev .k{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+  .ev .c{font-size:13px;color:var(--ink-2);font-family:"JetBrains Mono";line-height:1.45}
+  .ev.flag{border-color:#ffd9b0;background:#fff9f0}
+  .flagrow{display:flex;gap:8px;margin-bottom:6px}
+  .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px}
+  .tag.sec{background:#fde8e8;color:#b42318}
+  .tag.ont{background:#e6f6ee;color:#067a4e}
+  .scorebox{position:absolute;right:26px;margin-top:-8px}
+
+  /* logos strip */
+  .strip{padding:46px 0 8px;text-align:center}
+  .strip p{color:var(--ink-3);font-size:13px;letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+  .logos{display:flex;flex-wrap:wrap;gap:14px 40px;justify-content:center;align-items:center;margin-top:22px;opacity:.9}
+  .logos .lg{font-family:"Space Grotesk";font-weight:600;font-size:17px;color:#9aa3b5;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .logos .lg b{width:14px;height:14px;border-radius:4px;background:#cdd4e1;display:inline-block}
+
+  /* features */
+  section.feat{padding:96px 0 20px}
+  .sec-head{max-width:62ch}
+  .sec-head .eyebrow{color:var(--accent-ink);font-weight:600;font-size:13.5px;letter-spacing:.02em}
+  .sec-head h2{font-size:38px;margin:12px 0 0;line-height:1.1}
+  .sec-head p{color:var(--ink-2);font-size:17.5px;margin-top:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:44px}
+  .card{padding:26px 24px;border:1px solid var(--line);border-radius:var(--r);background:#fff}
+  .card .ico{width:38px;height:38px;border-radius:10px;background:var(--accent-wash);display:grid;place-items:center;margin-bottom:16px}
+  .card .ico svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.7}
+  .card h3{font-size:18px;margin-bottom:8px}
+  .card p{color:var(--ink-2);font-size:14.5px;line-height:1.55}
+  .card .more{display:inline-block;margin-top:14px;color:var(--accent-ink);font-size:13.5px;font-weight:600}
+
+  /* split proof */
+  .split{display:grid;grid-template-columns:1.05fr .95fr;gap:54px;align-items:center;padding:92px 0}
+  .split h2{font-size:34px;line-height:1.12}
+  .split .lead{color:var(--ink-2);font-size:17px;margin-top:16px}
+  .list{margin-top:26px;display:flex;flex-direction:column;gap:16px}
+  .li{display:flex;gap:13px}
+  .li .ck{width:22px;height:22px;border-radius:7px;background:#e8fff4;display:grid;place-items:center;flex:none;margin-top:1px}
+  .li .ck svg{width:13px;height:13px;stroke:var(--ok);fill:none;stroke-width:2.2}
+  .li b{font-weight:600;font-size:15px}
+  .li span{display:block;color:var(--ink-2);font-size:14px;margin-top:2px}
+  .panel{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#fff, #fbfcff);
+    box-shadow:0 24px 50px -34px rgba(16,24,52,.32);padding:8px}
+  .panel-in{border:1px solid var(--line-2);border-radius:11px;overflow:hidden}
+  .pbar{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line-2);font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .pbar .gd{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .compliance{padding:16px}
+  .crow{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;border:1px solid var(--line-2);border-radius:9px;margin-bottom:8px}
+  .crow .who{display:flex;flex-direction:column}
+  .crow .who b{font-size:13.5px}
+  .crow .who span{font-size:12px;color:var(--ink-3)}
+  .badge{font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:7px}
+  .b-ok{background:#e6f6ee;color:#067a4e}
+  .b-warn{background:#fef3df;color:#a96a00}
+  .b-bad{background:#fde8e8;color:#b42318}
+
+  /* cta band */
+  .band{margin:40px 0 0;border:1px solid var(--line);border-radius:20px;background:var(--bg-2);
+    text-align:center;padding:64px 24px}
+  .band h2{font-size:38px}
+  .band p{color:var(--ink-2);font-size:18px;margin:14px auto 0;max-width:52ch}
+  .band .cta{margin-top:28px}
+
+  footer{margin-top:90px;border-top:1px solid var(--line);padding:40px 0}
+  .foot{display:flex;align-items:center;justify-content:space-between;color:var(--ink-3);font-size:13.5px}
+  .foot .brand{font-size:16px;color:var(--ink-2)}
+
+  @media(max-width:880px){
+    h1.title{font-size:42px}.shot-body{grid-template-columns:1fr}.side{display:none}
+    .grid3{grid-template-columns:1fr}.split{grid-template-columns:1fr;gap:34px}
+  }
+</style>
+</head>
+<body>
+
+<nav><div class="wrap nav-in">
+  <div class="brand"><span class="glyph"></span>Aperture</div>
+  <div class="nav-links"><a href="#">Platform</a><a href="#">Visibility</a><a href="#">Enforcement</a><a href="#">eDiscovery</a><a href="#">Pricing</a><a href="#">Docs</a></div>
+  <div class="nav-right"><a class="link-sm" href="#">Sign in</a><a class="btn btn-primary" href="#">Book a demo</a></div>
+</div></nav>
+
+<header class="hero wrap">
+  <span class="pill"><span class="dot"></span>Governance for company-provided AI coding</span>
+  <h1 class="title">See every line of code your AI tools write.</h1>
+  <p class="sub">You gave the team Claude Code. Aperture gives you the other half: a complete, searchable record of what was prompted, generated, and shipped — with the controls to keep it on-policy.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="#">Book a demo</a>
+    <a class="btn btn-ghost" href="#">▸ Watch the 2-min tour</a>
+  </div>
+  <p class="micro">Deploys in an afternoon · works telemetry-off · SSO &amp; SCIM</p>
+</header>
+
+<div class="wrap">
+  <div class="shot">
+    <div class="shot-bar">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="shot-tabs"><span class="on">Session replay</span><span>Findings</span><span>Fleet</span><span>On-task</span></div>
+    </div>
+    <div class="shot-body">
+      <aside class="side">
+        <h4>Workspace</h4>
+        <a class="on"><span class="ic"></span>Sessions</a>
+        <a><span class="ic"></span>Search</a>
+        <a><span class="ic"></span>Findings</a>
+        <a><span class="ic"></span>Fleet</a>
+        <a><span class="ic"></span>Review queue</a>
+        <a><span class="ic"></span>Policy</a>
+      </aside>
+      <div class="main">
+        <div class="crumb">Sessions / dana@acme.com / deploy-script-help</div>
+        <h3>Session replay · <span class="mono" style="font-size:14px;color:var(--ink-3)">acme/deployer</span></h3>
+        <div class="tl">
+          <div class="ev"><div class="k">user&nbsp;prompt</div><div class="c">Help me wire the deploy. Use AWS key AKIA…7EXAMPLE and ship the PROJ-7 rollout.</div></div>
+          <div class="ev flag">
+            <div class="k">finding</div>
+            <div>
+              <div class="flagrow"><span class="tag sec">secret · aws_access_key</span><span class="tag sec">pii · email</span></div>
+              <div class="c">redacted: AKIA…LE — surfaced inline, raw never stored</div>
+            </div>
+          </div>
+          <div class="ev"><div class="k">tool · bash</div><div class="c">$ git commit -m "deploy script" &amp;&amp; gh pr create</div></div>
+          <div class="ev"><div class="k">assistant</div><div class="c">Opened PR #214. On-task: 88 — commit landed, references PROJ-7.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="strip wrap">
+  <p>Works with the tools your engineers already use</p>
+  <div class="logos">
+    <span class="lg"><b></b>Claude&nbsp;Code</span>
+    <span class="lg"><b></b>GitHub</span>
+    <span class="lg"><b></b>Okta&nbsp;SSO</span>
+    <span class="lg"><b></b>Jira</span>
+    <span class="lg"><b></b>Intune&nbsp;MDM</span>
+    <span class="lg"><b></b>Splunk</span>
+  </div>
+</div>
+
+<section class="feat wrap">
+  <div class="sec-head">
+    <div class="eyebrow">One platform, the whole lifecycle</div>
+    <h2>Capture it. Investigate it. Enforce it.</h2>
+    <p>Aperture turns AI-assisted engineering from a blind spot into a system of record your security, compliance, and engineering leaders can actually act on.</p>
+  </div>
+  <div class="grid3">
+    <div class="card">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+      <h3>Total visibility</h3>
+      <p>Every prompt, response, tool call, and file diff — captured verbatim and replayable, session by session. Works even with vendor telemetry off.</p>
+      <a class="more" href="#">Session replay →</a>
+    </div>
+    <div class="card">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
+      <h3>Enforcement that holds</h3>
+      <p>Push a managed policy that forces the agent on, locks logins to your org, and blocks personal accounts — then attest every endpoint stays compliant.</p>
+      <a class="more" href="#">Fleet &amp; policy →</a>
+    </div>
+    <div class="card">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h16v6H4z"/><path d="M4 14h10v6H4z"/><path d="M18 14v6M21 17h-6"/></svg></div>
+      <h3>Defensible eDiscovery</h3>
+      <p>Full-text search across everything, automatic secret &amp; PII findings, legal hold, and one-click export of the complete record for audit or counsel.</p>
+      <a class="more" href="#">Search &amp; export →</a>
+    </div>
+  </div>
+</section>
+
+<section class="split wrap">
+  <div>
+    <h2>Know it's on-task — without reading over anyone's shoulder.</h2>
+    <p class="lead">Aperture scores each session on signals that matter to the business: did work land in a commit, survive to a merged PR, map to a ticket? Role-aware anomalies surface for review — not punishment.</p>
+    <div class="list">
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Work vs. personal, defined by you</b><span>Per-repo work definitions override the default — so "looks unrelated but is related" is handled.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Role-aware review queue</b><span>A marketer shipping heavy code or a personal repo on company time becomes an indicator a human reviews.</span></div></div>
+      <div class="li"><span class="ck"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg></span><div><b>Aggregate-first, never covert</b><span>The agent is visible, the record is auditable, and CCGuard console actions are themselves logged.</span></div></div>
+    </div>
+  </div>
+  <div class="panel"><div class="panel-in">
+    <div class="pbar"><span class="gd"></span>Fleet compliance · 3 devices</div>
+    <div class="compliance">
+      <div class="crow"><div class="who"><b>WS-ENG-07</b><span>dana@acme.com · macOS</span></div><span class="badge b-ok">compliant</span></div>
+      <div class="crow"><div class="who"><b>WS-MKT-02</b><span>sam@acme.com · windows</span></div><span class="badge b-warn">drifted</span></div>
+      <div class="crow"><div class="who"><b>LAPTOP-14</b><span>unmanaged · windows</span></div><span class="badge b-bad">tampered</span></div>
+      <div style="margin-top:14px;padding:13px;border:1px dashed var(--line);border-radius:10px;display:flex;justify-content:space-between;align-items:center">
+        <div><b style="font-size:13.5px">On-task this week</b><div style="font-size:12px;color:var(--ink-3)">142 sessions scored</div></div>
+        <div style="font-family:'Space Grotesk';font-weight:700;font-size:26px;color:var(--accent-ink)">86%</div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<div class="wrap">
+  <div class="band">
+    <h2>Prove your AI rollout is safe — to your CISO and your auditors.</h2>
+    <p>Stand up Aperture against your own Claude Code fleet today. No agent rewrites, no developer friction.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#">Book a demo</a>
+      <a class="btn btn-ghost" href="#">Read the docs</a>
+    </div>
+  </div>
+</div>
+
+<footer class="wrap">
+  <div class="foot">
+    <div class="brand"><span class="glyph" style="width:18px;height:18px"></span> Aperture</div>
+    <div>© 2026 Aperture · Governance for AI-assisted engineering</div>
+  </div>
+</footer>
+
+</body>
+</html>

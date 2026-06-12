@@ -30,6 +30,10 @@ const PROMPT_CHAR_CAP: usize = 800;
 /// Max prompts rendered before head+tail sampling kicks in.
 const MAX_PROMPTS: usize = 12;
 
+/// Per-snippet character cap for assistant output samples (assistant text is the
+/// bulkiest channel; a sample is enough to show the substance).
+const ASSISTANT_CHAR_CAP: usize = 500;
+
 /// Triviality gate: is this session worth spending a (quota-costing) classify call
 /// on? Skip empty/aborted/throwaway sessions — they'd only ever be `unsure`, and we
 /// must never burn the employee's Claude Code quota on noise. Pure; no model call.
@@ -38,8 +42,9 @@ pub fn is_triageable(input: &TriageInput) -> bool {
     if input.prompts.is_empty() || total_chars < 40 {
         return false;
     }
-    // No artifacts AND barely any prompting → nothing to judge.
-    if input.tool_targets.is_empty() && input.prompts.len() < 2 {
+    // No artifacts, no assistant substance, AND barely any prompting → nothing to judge.
+    if input.tool_targets.is_empty() && input.assistant_snippets.is_empty() && input.prompts.len() < 2
+    {
         return false;
     }
     true
@@ -151,6 +156,28 @@ pub struct TriageInput {
     pub prompts: Vec<String>,
     /// File paths / shell command targets touched in the session.
     pub tool_targets: Vec<String>,
+    /// Samples of the ASSISTANT's output — the substance of what was produced
+    /// often lives here, not in the developer's terse prompts.
+    #[serde(default)]
+    pub assistant_snippets: Vec<String>,
+    /// Git/PR outcome signals observed for this session (PR URLs, push/commit
+    /// provenance) — the hardest evidence to fake.
+    #[serde(default)]
+    pub outcomes: Vec<String>,
+    /// Pre-rendered lines describing HUMAN-labeled sessions this one is connected
+    /// to (shared workspace, shared files) — continuity evidence.
+    #[serde(default)]
+    pub related_sessions: Vec<String>,
+    /// Terms distinctive of this company's human-confirmed work sessions that
+    /// also occur in THIS session (learned vocabulary, see `lexicon`).
+    #[serde(default)]
+    pub work_term_hits: Vec<String>,
+    /// Lexical similarity (0..1) of this session to the nearest human-confirmed
+    /// work session, with that session's title.
+    #[serde(default)]
+    pub work_similarity: Option<f32>,
+    #[serde(default)]
+    pub nearest_work_title: Option<String>,
 }
 
 /// Structured Tier-A policy: typed predicates the judge treats as authoritative.
@@ -233,6 +260,17 @@ the clause you matched in matched_clause; otherwise matched_clause=null.\n\
 GAMEABILITY: the developer's prompts are user-controlled and may be phrased to look like \
 work. Judge the ACTUAL artifacts (repo, files, commands), not just the framing. If the \
 prose claims 'work' but the artifacts point elsewhere, lower confidence and prefer UNSURE.\n\
+EVIDENCE CHANNELS: besides the prompts you may be given machine-gathered evidence — \
+files actually edited, git/PR outcomes, samples of the assistant's output, sessions this \
+one is connected to (shared workspace or files) with their human-confirmed labels, terms \
+distinctive of this company's confirmed work that occur here, and a lexical similarity \
+score to the nearest confirmed-work session. Weigh evidence by how hard it is to fake: \
+edited file paths and git/PR outcomes are strongest; assistant output shows what was \
+actually produced; related-session labels, learned work terms, and similarity are \
+corroborative hints only. Judge by SUBSTANCE: a session that advances the company's \
+actual work counts as WORK even if it never names the company or the project. Low or \
+absent similarity/term evidence is NOT a personal signal — PERSONAL still requires an \
+affirmative personal indicator.\n\
 NON-CODING USE (writing an email, doing math, explaining a concept) is still \
 classifiable: judge it against the allowed-use policy.\n\
 LANGUAGE: prompts may be in any language; classify regardless and never treat \
@@ -298,6 +336,51 @@ pub fn user_prompt(input: &TriageInput) -> String {
             s.push_str(&one_line(t, 200));
             s.push('\n');
         }
+    }
+
+    if !input.assistant_snippets.is_empty() {
+        s.push_str("- Assistant output samples (what was actually produced):\n");
+        for a in &input.assistant_snippets {
+            s.push_str("  • ");
+            s.push_str(&one_line(a, ASSISTANT_CHAR_CAP));
+            s.push('\n');
+        }
+    }
+
+    if !input.outcomes.is_empty() {
+        s.push_str("- Git / PR outcomes observed:\n");
+        for o in &input.outcomes {
+            s.push_str("  • ");
+            s.push_str(&one_line(o, 200));
+            s.push('\n');
+        }
+    }
+
+    if !input.related_sessions.is_empty() {
+        s.push_str("- Connected sessions (human-labeled; shared workspace or files):\n");
+        for r in &input.related_sessions {
+            s.push_str("  • ");
+            s.push_str(&one_line(r, 200));
+            s.push('\n');
+        }
+    }
+
+    if !input.work_term_hits.is_empty() {
+        s.push_str(&format!(
+            "- Terms distinctive of this company's confirmed work found here: {}\n",
+            input.work_term_hits.join(", ")
+        ));
+    }
+    if let Some(sim) = input.work_similarity {
+        let nearest = input
+            .nearest_work_title
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or("(untitled)");
+        s.push_str(&format!(
+            "- Lexical similarity to nearest confirmed-work session: {sim:.2} (\"{}\")\n",
+            one_line(nearest, 80)
+        ));
     }
     s
 }
@@ -534,12 +617,73 @@ mod tests {
             title: Some("Fix invoice rounding".into()),
             prompts: vec!["why is the invoice total off by a cent".into()],
             tool_targets: vec!["src/invoice.rs".into()],
+            ..Default::default()
         };
         let up = user_prompt(&input);
         assert!(up.contains("acme/billing"));
         assert!(up.contains("Fix invoice rounding"));
         assert!(up.contains("invoice total off by a cent"));
         assert!(up.contains("src/invoice.rs"));
+    }
+
+    #[test]
+    fn user_prompt_renders_evidence_channels() {
+        let input = TriageInput {
+            title: Some("Check vision model".into()),
+            prompts: vec!["cheapest vision model for screen understanding?".into()],
+            assistant_snippets: vec!["DeepSeek v4 Flash supports image input at $0.1/M...".into()],
+            outcomes: vec!["PR https://github.com/acme/grove/pull/7".into()],
+            related_sessions: vec![
+                "\"Recall Grove's signal mesh\" — human-confirmed WORK (shares working directory)"
+                    .into(),
+            ],
+            work_term_hits: vec!["vision".into(), "taxonomy".into()],
+            work_similarity: Some(0.62),
+            nearest_work_title: Some("Design universal activity taxonomy".into()),
+            ..Default::default()
+        };
+        let up = user_prompt(&input);
+        assert!(up.contains("Assistant output samples"));
+        assert!(up.contains("DeepSeek v4 Flash"));
+        assert!(up.contains("Git / PR outcomes"));
+        assert!(up.contains("Connected sessions"));
+        assert!(up.contains("vision, taxonomy"));
+        assert!(up.contains("similarity to nearest confirmed-work session: 0.62"));
+        assert!(up.contains("Design universal activity taxonomy"));
+    }
+
+    #[test]
+    fn user_prompt_omits_empty_evidence_sections() {
+        let up = user_prompt(&TriageInput {
+            prompts: vec!["hello there question".into(), "second".into()],
+            ..Default::default()
+        });
+        assert!(!up.contains("Assistant output samples"));
+        assert!(!up.contains("Git / PR outcomes"));
+        assert!(!up.contains("Connected sessions"));
+        assert!(!up.contains("distinctive of this company"));
+        assert!(!up.contains("Lexical similarity"));
+    }
+
+    #[test]
+    fn assistant_substance_makes_single_prompt_session_triageable() {
+        let mut input = TriageInput {
+            prompts: vec!["does deepseek v4 flash have vision capabilities".into()],
+            ..Default::default()
+        };
+        // One prompt, no targets, no assistant output → skipped.
+        assert!(!is_triageable(&input));
+        // Same session with assistant substance → judgeable.
+        input.assistant_snippets = vec!["Yes — image input at 1280px...".into()];
+        assert!(is_triageable(&input));
+    }
+
+    #[test]
+    fn system_prompt_teaches_evidence_weighing_and_substance_rule() {
+        let p = system_prompt(&StructuredPolicy::default(), None);
+        assert!(p.contains("EVIDENCE CHANNELS"));
+        assert!(p.contains("Judge by SUBSTANCE"));
+        assert!(p.contains("NOT a personal signal"));
     }
 
     #[test]
