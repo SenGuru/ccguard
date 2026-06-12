@@ -16,9 +16,14 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use ccguard_core::triage::{self, TriageVerdict};
+
+/// Wall-clock cap on a single local classification — a hung `claude` must never
+/// stall the sweep (or the dev's machine).
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The fixed `-p` instruction. The server-built prompt (rules + session context) is
 /// piped via STDIN, so the only thing that touches the shell is this constant — the
@@ -79,6 +84,23 @@ pub fn classify(prompt: &str, model: &str) -> Result<TriageVerdict> {
             .take()
             .ok_or_else(|| anyhow!("could not open claude stdin"))?;
         si.write_all(prompt.as_bytes())?;
+    }
+
+    // Wall-clock timeout: poll for exit; kill if it overruns. (Classification output
+    // is tiny, so the unread stdout pipe can't fill / deadlock before we collect it.)
+    let start = Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(_) => break,
+            None => {
+                if start.elapsed() > JUDGE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(anyhow!("claude timed out after {}s", JUDGE_TIMEOUT.as_secs()));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
     }
 
     let out = child.wait_with_output()?;

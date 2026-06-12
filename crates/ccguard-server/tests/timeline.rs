@@ -65,6 +65,7 @@ async fn post_capture(pool: &PgPool, ingest_token: &str) {
         "repo": {"host": "github.com", "org": "acme-corp", "name": "billing", "path": "C:\\w"},
         "title": "Build billing module",
         "cwd": "C:\\w",
+        "signals": {"pushed": true},
         "events": [
             {"seq": 0, "ts": "2026-06-10T10:00:00Z", "kind": "user_prompt", "content": "implement billing"},
             {"seq": 1, "ts": "2026-06-10T10:00:01Z", "kind": "tool_call", "tool_name": "Bash", "target": "git status", "content": "{\"command\":\"git status\"}"},

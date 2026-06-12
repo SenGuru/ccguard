@@ -13,6 +13,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use ccguard_core::conformal::{self, Calibration, SelectiveDecision};
 use ccguard_core::event::Classification;
+use ccguard_core::gaming;
 use ccguard_core::triage::{self, StructuredPolicy, TriageInput, TriageLabel, TriageVerdict};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -237,13 +238,26 @@ pub async fn triage_one(
         .await
         .map_err(TriageError::Client)?;
 
-    Ok(apply_verdict(pool, tenant_id, session_id, &verdict, &cfg.model, calib).await?)
+    Ok(apply_verdict(pool, tenant_id, session_id, &verdict, &cfg.model, calib, None).await?)
 }
 
-/// Persist a verdict and gate it — independent of HOW the verdict was produced
-/// (the server-side Anthropic API, or the agent's local Claude Code CLI). Applies
-/// the conformal selective threshold, the structural enforceability gate, and
-/// mirrors a definite label onto the session. Pure-of-network.
+/// Load the tenant's current policy version (stamps every verdict so labels bind
+/// to the policy that produced them).
+async fn policy_version(pool: &PgPool, tenant_id: &str) -> Result<i32, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, i32>(
+        "select policy_version from tenant_triage_config where tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(1))
+}
+
+/// Persist a verdict and gate it — independent of HOW it was produced (the server
+/// Anthropic API, or the agent's local Claude Code). Applies the conformal selective
+/// threshold + the structural enforceability gate, computes gaming flags, stamps the
+/// policy version, and ALWAYS drives `captured_sessions.classification` to a terminal
+/// value (so a 'pending' session never gets stuck). Pure-of-network.
 pub async fn apply_verdict(
     pool: &PgPool,
     tenant_id: &str,
@@ -251,12 +265,12 @@ pub async fn apply_verdict(
     verdict: &TriageVerdict,
     model: &str,
     calib: &Calibration,
+    input_digest: Option<&str>,
 ) -> Result<TriageOutcome, sqlx::Error> {
     // Conformal selective gate: once CALIBRATED, a below-threshold verdict abstains
-    // to review. Before calibration (not enough human labels yet) the judge runs
+    // to review. Before calibration (too few human labels) the judge runs
     // uncalibrated and applies its label for visibility — otherwise it could never
-    // produce the verdicts humans review to build the calibration set in the first
-    // place. The abstain wrapper only suppresses application once it can vouch.
+    // produce the verdicts humans review to build the calibration set.
     let abstained = calib.usable
         && matches!(conformal::decide(verdict.confidence, calib), SelectiveDecision::Abstain)
         && verdict.label != TriageLabel::Unsure;
@@ -281,14 +295,29 @@ pub async fn apply_verdict(
         verdict.reason.clone()
     };
 
+    // Gaming flags (review-only; never alter the label). label_structure_conflict
+    // fires when the AI says work but the structural cascade says confirmed personal.
+    let prov_for_gaming = match structural {
+        Classification::Personal => Some("personal"),
+        Classification::Work => Some("work"),
+        Classification::Unknown => None,
+    };
+    let gaming_flags = gaming::flags(verdict.label.as_str(), prov_for_gaming);
+    let pv = policy_version(pool, tenant_id).await?;
+
     sqlx::query(
         "insert into session_triage \
-         (tenant_id, session_id, label, confidence, reason, model, resolved_by, structural, enforceable, updated_at) \
-         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8, now()) \
+         (tenant_id, session_id, label, confidence, reason, model, resolved_by, structural, \
+          enforceable, mixed, matched_clause, policy_version, gaming_flags, input_digest, \
+          next_retry_at, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8,$9,$10,$11,$12,$13, null, now()) \
          on conflict (tenant_id, session_id) do update set \
            label = excluded.label, confidence = excluded.confidence, reason = excluded.reason, \
            model = excluded.model, resolved_by = 'llm', structural = excluded.structural, \
-           enforceable = excluded.enforceable, updated_at = now()",
+           enforceable = excluded.enforceable, mixed = excluded.mixed, \
+           matched_clause = excluded.matched_clause, policy_version = excluded.policy_version, \
+           gaming_flags = excluded.gaming_flags, input_digest = excluded.input_digest, \
+           next_retry_at = null, updated_at = now()",
     )
     .bind(tenant_id)
     .bind(session_id)
@@ -298,21 +327,48 @@ pub async fn apply_verdict(
     .bind(model)
     .bind(structural.as_str())
     .bind(enforceable)
+    .bind(verdict.mixed)
+    .bind(&verdict.matched_clause)
+    .bind(pv)
+    .bind(&gaming_flags)
+    .bind(input_digest)
     .execute(pool)
     .await?;
 
-    // Mirror a definite label only when applied (not unsure, not abstained).
-    if applied {
-        if let Some(c) = llm_class {
-            sqlx::query(
-                "update captured_sessions set classification = $3 \
-                 where tenant_id = $1 and session_id = $2",
-            )
-            .bind(tenant_id)
-            .bind(session_id)
-            .bind(c.as_str())
-            .execute(pool)
-            .await?;
+    // ALWAYS drive classification to a terminal value — the drain that keeps a
+    // 'pending' session from sticking forever. Applied → work|personal; unsure or
+    // abstained → 'unknown' (terminal-safe, excluded from every meter, queued for review).
+    let final_coarse = match (applied, llm_class) {
+        (true, Some(c)) => c,
+        _ => Classification::Unknown,
+    };
+    sqlx::query(
+        "update captured_sessions set classification = $3 \
+         where tenant_id = $1 and session_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .bind(final_coarse.as_str())
+    .execute(pool)
+    .await?;
+
+    // Re-run on-task scoring + indicators now that the real (AI) class is known —
+    // at capture time the session was 'pending'/Unknown, so e.g. the personal_repo
+    // indicator must (re)compute against the verdict. Defensive: a scoring failure
+    // must not fail the verdict (it's already persisted).
+    if let Ok(Some(email)) = sqlx::query_scalar::<_, String>(
+        "select user_email from captured_sessions where tenant_id=$1 and session_id=$2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    {
+        if let Err(e) =
+            crate::handlers::capture::score_session(pool, tenant_id, session_id, final_coarse, &email)
+                .await
+        {
+            eprintln!("re-score after verdict failed for {session_id}: {e}");
         }
     }
 
@@ -340,7 +396,8 @@ pub async fn run_unclassified(
         "select s.session_id from captured_sessions s \
          left join session_triage t \
            on t.tenant_id = s.tenant_id and t.session_id = s.session_id \
-         where s.tenant_id = $1 and s.classification = 'unknown' and t.session_id is null \
+         where s.tenant_id = $1 and s.classification = 'pending' \
+           and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now())) \
          order by s.last_ts desc nulls last limit $2",
     )
     .bind(tenant_id)
@@ -355,6 +412,10 @@ pub async fn run_unclassified(
     let client = http_client();
     for r in &rows {
         let sid: String = r.get("session_id");
+        // Triviality gate: drains trivial sessions (pending → unknown) without billing.
+        if assemble_triageable(pool, tenant_id, &sid).await?.is_none() {
+            continue;
+        }
         summary.attempted += 1;
         match triage_one(pool, &client, tenant_id, &sid, cfg, &policy, &calib).await {
             Ok(o) => {
@@ -415,11 +476,43 @@ impl std::fmt::Display for TriageError {
 // their tenancy. The server assembles the prompt; the agent runs it; the verdict
 // comes back here and flows through the SAME conformal + structural gates.
 
-/// One unclassified session the agent should classify, with the ready-to-run prompt.
+/// One unclassified session the agent should classify, with the ready-to-run prompt
+/// and a content digest the agent echoes back so a verdict for stale content is rejected.
 #[derive(Debug, Serialize)]
 pub struct PendingItem {
     pub session_id: String,
     pub prompt: String,
+    pub input_digest: String,
+}
+
+/// sha256 of the built prompt — the staleness key for a session's classified content.
+fn input_digest(prompt: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(prompt.as_bytes()))
+}
+
+/// Assemble a session's judge input, but only if it's worth a (quota-costing)
+/// classify call. Trivial/empty sessions are DRAINED `pending → 'unknown'`
+/// (terminal-safe, never billed) and return `None`, so they don't stick at pending.
+async fn assemble_triageable(
+    pool: &PgPool,
+    tenant_id: &str,
+    session_id: &str,
+) -> Result<Option<TriageInput>, sqlx::Error> {
+    match assemble_input(pool, tenant_id, session_id).await? {
+        Some(input) if triage::is_triageable(&input) => Ok(Some(input)),
+        _ => {
+            sqlx::query(
+                "update captured_sessions set classification='unknown' \
+                 where tenant_id=$1 and session_id=$2 and classification='pending'",
+            )
+            .bind(tenant_id)
+            .bind(session_id)
+            .execute(pool)
+            .await?;
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,7 +543,8 @@ pub async fn pending_endpoint(
     let rows = sqlx::query(
         "select s.session_id from captured_sessions s \
          left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
-         where s.tenant_id=$1 and s.classification='unknown' and t.session_id is null \
+         where s.tenant_id=$1 and s.classification='pending' \
+           and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now())) \
            and ($2::text is null or s.user_email=$2) \
          order by s.last_ts desc nulls last limit $3",
     )
@@ -464,9 +558,11 @@ pub async fn pending_endpoint(
     let mut out = Vec::new();
     for r in &rows {
         let sid: String = r.get("session_id");
-        if let Some(input) = assemble_input(&pool, &tenant, &sid).await? {
+        // Triviality gate (drains trivial sessions, never bills them).
+        if let Some(input) = assemble_triageable(&pool, &tenant, &sid).await? {
             let prompt = format!("{system}\n\n{}", triage::user_prompt(&input));
-            out.push(PendingItem { session_id: sid, prompt });
+            let dig = input_digest(&prompt);
+            out.push(PendingItem { session_id: sid, prompt, input_digest: dig });
         }
     }
     Ok(Json(out))
@@ -482,6 +578,14 @@ pub struct VerdictBody {
     pub reason: String,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub mixed: bool,
+    #[serde(default)]
+    pub matched_clause: Option<String>,
+    /// The digest the agent was given for the content it classified; rejected if the
+    /// session's content has changed since (stale verdict → re-enqueue, don't apply).
+    #[serde(default)]
+    pub input_digest: Option<String>,
 }
 fn half() -> f32 {
     0.5
@@ -495,18 +599,58 @@ pub async fn verdict_endpoint(
     State(pool): State<PgPool>,
     Json(b): Json<VerdictBody>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // Staleness guard: if the agent's digest doesn't match the session's CURRENT
+    // content, the verdict is for stale content — reject and re-enqueue.
+    if let Some(posted) = b.input_digest.as_deref() {
+        let cfg = load_config(&pool, &tenant).await?;
+        let policy = cfg.structured_policy();
+        let work_def = (!cfg.work_definition.trim().is_empty()).then_some(cfg.work_definition.as_str());
+        let current = match assemble_input(&pool, &tenant, &b.session_id).await? {
+            Some(input) => {
+                let prompt = format!("{}\n\n{}", triage::system_prompt(&policy, work_def), triage::user_prompt(&input));
+                Some(input_digest(&prompt))
+            }
+            None => None,
+        };
+        if current.as_deref() != Some(posted) {
+            sqlx::query(
+                "update session_triage set next_retry_at = now() \
+                 where tenant_id=$1 and session_id=$2",
+            )
+            .bind(&tenant)
+            .bind(&b.session_id)
+            .execute(&pool)
+            .await?;
+            return Ok(Json(serde_json::json!({
+                "session_id": b.session_id, "applied": false, "stale": true
+            })));
+        }
+    }
+
     let verdict = TriageVerdict {
         label: TriageLabel::from_str(&b.label),
         confidence: b.confidence.clamp(0.0, 1.0),
         reason: b.reason,
+        mixed: b.mixed,
+        matched_clause: b.matched_clause.filter(|s| !s.trim().is_empty()),
     };
     let model = b.model.unwrap_or_else(|| "claude-code-local".to_string());
     let calib = enforcement::load_calibration(&pool, &tenant).await?;
-    let outcome = apply_verdict(&pool, &tenant, &b.session_id, &verdict, &model, &calib).await?;
+    let outcome = apply_verdict(
+        &pool,
+        &tenant,
+        &b.session_id,
+        &verdict,
+        &model,
+        &calib,
+        b.input_digest.as_deref(),
+    )
+    .await?;
     Ok(Json(serde_json::json!({
         "session_id": b.session_id,
         "label": outcome.verdict.label.as_str(),
         "applied": outcome.applied,
         "abstained": outcome.abstained,
+        "mixed": outcome.verdict.mixed,
     })))
 }

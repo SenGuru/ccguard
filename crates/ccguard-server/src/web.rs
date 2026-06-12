@@ -1783,7 +1783,7 @@ pub async fn enforcement_page(user: WebUser, State(pool): State<PgPool>) -> Html
     let can_edit = user.role == "owner" || user.role == "admin";
     let report = crate::handlers::enforcement::load_report(&pool, &user.tenant_id)
         .await
-        .unwrap_or_else(|_| ccguard_core::precision_gate::evaluate(&[], crate::handlers::enforcement::MIN_LABELS, crate::handlers::enforcement::MAX_FALSE_PERSONAL));
+        .unwrap_or_else(|_| ccguard_core::precision_gate::evaluate(&[], crate::handlers::enforcement::MIN_LABELS, crate::handlers::enforcement::MAX_FALSE_PERSONAL, crate::handlers::enforcement::MIN_PERSONAL_PREDICTIONS));
     let calib = crate::handlers::enforcement::load_calibration(&pool, &user.tenant_id)
         .await
         .unwrap_or(ccguard_core::conformal::Calibration { threshold: 1.01, n: 0, alpha: 0.1, usable: false });

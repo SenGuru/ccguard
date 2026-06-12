@@ -38,6 +38,9 @@ pub struct GateReport {
     pub missed_personal_rate: f32,
     pub min_labels_met: bool,
     pub floor_met: bool,
+    /// Enough PREDICTED-personal labels exist that the false-personal bound is
+    /// trustworthy (the gate can't read GO off a handful of personal calls).
+    pub personal_stratum_met: bool,
     pub decision: GateDecision,
 }
 
@@ -60,10 +63,14 @@ fn wilson_upper(x: usize, m: usize) -> f32 {
 ///
 /// `min_labels` — minimum stratified labels required (e.g. 200).
 /// `max_false_personal` — the agreed floor the Wilson upper bound must not exceed.
+/// `min_personal_predictions` — the personal-stratum floor: how many predicted-
+/// personal labels the holdout must contain before its false-personal bound counts
+/// (so a clean-looking GO can't ride on 2-3 lucky personal calls).
 pub fn evaluate(
     labels: &[LabeledOutcome],
     min_labels: usize,
     max_false_personal: f32,
+    min_personal_predictions: usize,
 ) -> GateReport {
     let n = labels.len();
     let predicted_personal = labels.iter().filter(|l| l.predicted_personal).count();
@@ -103,7 +110,11 @@ pub fn evaluate(
     } else {
         false_personal_upper_ci <= max_false_personal
     };
-    let decision = if min_labels_met && floor_met {
+    // Personal-stratum floor: either the model never predicts personal (nothing to
+    // throttle), or there are enough personal predictions to trust the bound.
+    let personal_stratum_met =
+        predicted_personal == 0 || predicted_personal >= min_personal_predictions;
+    let decision = if min_labels_met && floor_met && personal_stratum_met {
         GateDecision::Go
     } else {
         GateDecision::NoGo
@@ -117,6 +128,7 @@ pub fn evaluate(
         missed_personal_rate,
         min_labels_met,
         floor_met,
+        personal_stratum_met,
         decision,
     }
 }
@@ -128,11 +140,12 @@ mod tests {
     fn lo(pred: bool, actual: bool) -> LabeledOutcome {
         LabeledOutcome { predicted_personal: pred, actual_personal: actual }
     }
+    const MINP: usize = 40; // personal-stratum floor for tests
 
     #[test]
     fn too_few_labels_is_nogo_even_if_perfect() {
         let labels: Vec<_> = (0..50).map(|_| lo(true, true)).collect();
-        let r = evaluate(&labels, 200, 0.05);
+        let r = evaluate(&labels, 200, 0.05, MINP);
         assert!(!r.min_labels_met);
         assert_eq!(r.decision, GateDecision::NoGo);
     }
@@ -142,10 +155,11 @@ mod tests {
         // 300 labels: 100 correct personal, 200 correct work, no false personal.
         let mut labels: Vec<_> = (0..100).map(|_| lo(true, true)).collect();
         labels.extend((0..200).map(|_| lo(false, false)));
-        let r = evaluate(&labels, 200, 0.05);
+        let r = evaluate(&labels, 200, 0.05, MINP);
         assert!(r.min_labels_met);
         assert_eq!(r.personal_precision, 1.0);
         assert!(r.false_personal_upper_ci <= 0.05, "upper ci {}", r.false_personal_upper_ci);
+        assert!(r.personal_stratum_met);
         assert_eq!(r.decision, GateDecision::Go);
     }
 
@@ -155,7 +169,7 @@ mod tests {
         let mut labels: Vec<_> = (0..70).map(|_| lo(true, true)).collect();
         labels.extend((0..30).map(|_| lo(true, false))); // false personal
         labels.extend((0..200).map(|_| lo(false, false)));
-        let r = evaluate(&labels, 200, 0.05);
+        let r = evaluate(&labels, 200, 0.05, MINP);
         assert!(r.false_personal_rate > 0.2);
         assert!(!r.floor_met);
         assert_eq!(r.decision, GateDecision::NoGo);
@@ -164,17 +178,30 @@ mod tests {
     #[test]
     fn never_predicting_personal_meets_floor() {
         let labels: Vec<_> = (0..250).map(|_| lo(false, false)).collect();
-        let r = evaluate(&labels, 200, 0.05);
+        let r = evaluate(&labels, 200, 0.05, MINP);
         assert_eq!(r.personal_precision, 1.0);
         assert!(r.floor_met);
+        assert!(r.personal_stratum_met);
         assert_eq!(r.decision, GateDecision::Go);
+    }
+
+    #[test]
+    fn too_few_personal_predictions_is_nogo_even_if_clean() {
+        // 250 labels, only 5 predicted-personal (all correct) → clean but the
+        // personal stratum is too thin to trust the bound → NO-GO.
+        let mut labels: Vec<_> = (0..5).map(|_| lo(true, true)).collect();
+        labels.extend((0..245).map(|_| lo(false, false)));
+        let r = evaluate(&labels, 200, 0.05, MINP);
+        assert!(r.min_labels_met);
+        assert!(!r.personal_stratum_met);
+        assert_eq!(r.decision, GateDecision::NoGo);
     }
 
     #[test]
     fn wilson_upper_exceeds_point_estimate_for_small_n() {
         // 0 FP out of 10 → point estimate 0 but the upper bound is well above 0.
         let labels: Vec<_> = (0..10).map(|_| lo(true, true)).collect();
-        let r = evaluate(&labels, 5, 0.05);
+        let r = evaluate(&labels, 5, 0.05, 1);
         assert_eq!(r.false_personal_rate, 0.0);
         assert!(r.false_personal_upper_ci > 0.05, "tiny-n upper ci should be loose: {}", r.false_personal_upper_ci);
         // min_labels met (5) but the loose CI fails the floor → NoGo.

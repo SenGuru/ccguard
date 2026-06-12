@@ -275,6 +275,9 @@ fn run_triage(args: &Args, email: &str, poster: &Poster) -> anyhow::Result<()> {
                     "label": v.label.as_str(),
                     "confidence": v.confidence,
                     "reason": v.reason,
+                    "mixed": v.mixed,
+                    "matched_clause": v.matched_clause,
+                    "input_digest": item.input_digest,
                     "model": format!("claude-code/{}", args.judge_model),
                 });
                 match poster.post_triage_verdict(&body) {

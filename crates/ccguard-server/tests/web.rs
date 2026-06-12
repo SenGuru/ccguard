@@ -866,6 +866,26 @@ async fn review_queue_lists_indicators_and_review_button_flips_status(pool: PgPo
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
+    // AI-primary: capture leaves it 'pending'; the AI verdict classifies it personal
+    // and re-runs scoring, which raises the personal_repo indicator.
+    let vbody = serde_json::json!({
+        "session_id":"sess-review","label":"personal","confidence":0.9,"reason":"test"
+    })
+    .to_string();
+    let vresp = app(pool.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/triage/verdict")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {ingest}"))
+                .body(Body::from(vbody))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(vresp.status(), StatusCode::OK);
+
     let token = login_cookie(&pool).await;
 
     // Review queue (open) shows the personal_repo indicator + the session id.

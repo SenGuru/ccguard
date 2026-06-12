@@ -47,10 +47,14 @@ async fn seed(pool: &PgPool) -> String {
 #[sqlx::test(migrations = "./migrations")]
 async fn stores_session_events_and_dedupes_content(pool: PgPool) {
     let token = seed(&pool).await;
+    // AI-primary: a corp remote alone is now 'pending' (the AI owns the label). To
+    // get a deterministic 'work' shortcut we need a Tier-G ground-truth signal — a
+    // real push to the corp org. `signals.pushed` + the allowlisted remote → W-PUSH.
     let body = serde_json::json!({
         "session_id":"s1","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"acme-corp","name":"r","path":"C:\\w"},
         "title":"build","cwd":"C:\\w",
+        "signals":{"pushed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"do X"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"tool_call","tool_name":"Bash","target":"git status","content":"do X"},

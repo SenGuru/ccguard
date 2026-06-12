@@ -17,6 +17,9 @@ use crate::error::AppError;
 pub const MIN_LABELS: usize = 200;
 /// The agreed false-personal floor the Wilson upper bound must clear.
 pub const MAX_FALSE_PERSONAL: f32 = 0.05;
+/// Personal-stratum floor: the holdout must contain at least this many predicted-
+/// personal labels before its false-personal bound is trusted for GO.
+pub const MIN_PERSONAL_PREDICTIONS: usize = 40;
 /// Target accepted-error for the conformal judge calibration.
 pub const CONFORMAL_ALPHA: f32 = 0.10;
 /// Minimum labels before the conformal calibration is usable.
@@ -69,7 +72,12 @@ pub async fn load_report(pool: &PgPool, tenant_id: &str) -> Result<GateReport, s
             actual_personal: human == "personal",
         })
         .collect();
-    Ok(precision_gate::evaluate(&outcomes, MIN_LABELS, MAX_FALSE_PERSONAL))
+    Ok(precision_gate::evaluate(
+        &outcomes,
+        MIN_LABELS,
+        MAX_FALSE_PERSONAL,
+        MIN_PERSONAL_PREDICTIONS,
+    ))
 }
 
 /// Recompute the precision gate + conformal calibration and persist them to

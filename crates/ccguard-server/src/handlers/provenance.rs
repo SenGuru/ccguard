@@ -91,23 +91,33 @@ pub async fn classify_and_persist(
     tenant_id: &str,
     s: &CapturedSession,
     override_class: Option<Classification>,
-) -> Result<Classification, sqlx::Error> {
-    let (class_str, confidence, provisional, resolved_by, reasons, coarse) = match override_class {
-        Some(c) => (override_class_str(c).to_string(), 1.0f32, false, "admin_override".to_string(), String::new(), c),
-        None => {
-            let policy = load_policy(pool, tenant_id).await?;
-            let raw = build_raw(s);
-            let v: Verdict = provenance::classify_raw(&raw, &policy);
-            (
-                v.class.as_str().to_string(),
-                v.confidence,
-                v.provisional,
-                v.resolved_by.to_string(),
-                v.reasons.join("; "),
-                v.class.to_classification(),
-            )
-        }
-    };
+) -> Result<CaptureClassification, sqlx::Error> {
+    // Always compute + persist the REAL provenance verdict (the corroborator /
+    // safety net reads session_provenance.class — that is unchanged by AI-primary).
+    let (class_str, confidence, provisional, resolved_by, reasons, prov_resolved) =
+        match override_class {
+            Some(c) => (
+                override_class_str(c).to_string(),
+                1.0f32,
+                false,
+                "admin_override".to_string(),
+                String::new(),
+                "admin_override".to_string(),
+            ),
+            None => {
+                let policy = load_policy(pool, tenant_id).await?;
+                let raw = build_raw(s);
+                let v: Verdict = provenance::classify_raw(&raw, &policy);
+                (
+                    v.class.as_str().to_string(),
+                    v.confidence,
+                    v.provisional,
+                    v.resolved_by.to_string(),
+                    v.reasons.join("; "),
+                    v.resolved_by.to_string(),
+                )
+            }
+        };
 
     sqlx::query(
         "insert into session_provenance \
@@ -128,7 +138,42 @@ pub async fn classify_and_persist(
     .execute(pool)
     .await?;
 
-    Ok(coarse)
+    // AI-PRIMARY INVERSION: structural signals no longer own the dashboard label.
+    // captured_sessions.classification is set to:
+    //   - the admin override, if present (authoritative); or
+    //   - 'work' as a FREE STRONG-WORK SHORTCUT only when a Tier-G ground-truth
+    //     signal fired (real corp push / signed corp identity) — never structural
+    //     'personal', never a corroborator-only 'work_provisional'; or
+    //   - 'pending' — the AI judge now owns it (the agent's local Claude Code, or
+    //     the opt-in server-API sweep, will resolve it).
+    Ok(match override_class {
+        Some(c) => CaptureClassification {
+            stored: override_class_str(c).to_string(),
+            coarse: c,
+            shortcut: true,
+        },
+        None if prov_resolved == "tier_g" => CaptureClassification {
+            stored: "work".to_string(),
+            coarse: Classification::Work,
+            shortcut: true,
+        },
+        None => CaptureClassification {
+            stored: "pending".to_string(),
+            coarse: Classification::Unknown,
+            shortcut: false,
+        },
+    })
+}
+
+/// The classification decision for one captured session.
+pub struct CaptureClassification {
+    /// Value to store in `captured_sessions.classification`
+    /// (`work` | `personal` | `unknown` | `pending`).
+    pub stored: String,
+    /// Coarse class for downstream on-task scoring (`pending` → `Unknown`).
+    pub coarse: Classification,
+    /// True when an override or a strong-work shortcut decided it (no AI call needed).
+    pub shortcut: bool,
 }
 
 #[cfg(test)]

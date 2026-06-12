@@ -7,6 +7,7 @@ pub mod enforce;
 pub mod enforce_gate;
 pub mod event;
 pub mod findings;
+pub mod gaming;
 pub mod ledger;
 pub mod ontask;
 pub mod precision_gate;

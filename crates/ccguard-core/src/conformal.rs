@@ -41,6 +41,34 @@ pub enum SelectiveDecision {
     Abstain,
 }
 
+/// Which operating regime the calibration is in — drives the dashboard banner so
+/// the admin understands what the judge is doing right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalibrationRegime {
+    /// Too few labels yet — the judge applies its label for visibility only and
+    /// never abstains (it can't vouch, but it must still produce verdicts to review).
+    Cold,
+    /// Enough labels and a usable threshold — abstains below it.
+    Calibrated,
+    /// Enough labels but NO cutoff controls the error (the judge is confidently
+    /// wrong on this tenant's data) — abstains on everything → all to review. This
+    /// almost always means the work definition is the problem.
+    Degenerate,
+}
+
+impl Calibration {
+    /// The current operating regime.
+    pub fn regime(&self) -> CalibrationRegime {
+        if !self.usable {
+            CalibrationRegime::Cold
+        } else if self.threshold > 1.0 {
+            CalibrationRegime::Degenerate
+        } else {
+            CalibrationRegime::Calibrated
+        }
+    }
+}
+
 /// 95% Wilson upper bound for `x` errors in `m` accepted predictions.
 fn wilson_upper(x: usize, m: usize) -> f32 {
     if m == 0 {

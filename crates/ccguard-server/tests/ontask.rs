@@ -89,6 +89,16 @@ async fn post_capture(pool: &PgPool, token: &str, body: String) -> StatusCode {
         .status()
 }
 
+/// AI-primary: structural-personal now lands at 'pending'; the AI verdict is what
+/// classifies it personal (and re-runs scoring/indicators). Simulate that verdict.
+async fn post_verdict(pool: &PgPool, ingest: &str, session_id: &str, label: &str) -> StatusCode {
+    let body = serde_json::json!({
+        "session_id": session_id, "label": label, "confidence": 0.9, "reason": "test"
+    })
+    .to_string();
+    post_json(pool, "/v1/triage/verdict", ingest, body).await
+}
+
 async fn post_json(pool: &PgPool, uri: &str, token: &str, body: String) -> StatusCode {
     app(pool.clone())
         .oneshot(
@@ -156,12 +166,13 @@ async fn indicator_count(pool: &PgPool, session_id: &str, kind: &str) -> i64 {
 #[sqlx::test(migrations = "./migrations")]
 async fn work_with_commit_and_ticket_scores_on_task(pool: PgPool) {
     let ingest = seed(&pool).await;
-    // Allowlisted host+org => classifies work. A user_prompt references PROJ-7,
-    // a Bash `git commit`, and an assistant_text.
+    // A real push to the allowlisted corp org → W-PUSH (Tier-G) → free 'work'
+    // shortcut. References PROJ-7, a `git commit`, and an assistant_text.
     let body = serde_json::json!({
         "session_id":"s_work","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"acme-corp","name":"billing","path":"C:\\w"},
         "title":"ship it","cwd":"C:\\w",
+        "signals":{"pushed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"work on PROJ-7 please"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"tool_call","tool_name":"Bash","target":"git commit -m x","content":"{\"command\":\"git commit -m x\"}"},
@@ -203,6 +214,9 @@ async fn personal_no_commit_scores_off_task_and_raises_indicators(pool: PgPool) 
     })
     .to_string();
     assert_eq!(post_capture(&pool, &ingest, body).await, StatusCode::ACCEPTED);
+    // AI-primary: capture leaves it 'pending'; the AI verdict classifies it personal
+    // and re-runs scoring → off_task + personal_repo indicators.
+    assert_eq!(post_verdict(&pool, &ingest, "s_personal", "personal").await, StatusCode::OK);
 
     let (_score, label) = score_row(&pool, "s_personal").await;
     assert_eq!(label, "off_task");
@@ -307,6 +321,7 @@ async fn indicator_status_flow(pool: PgPool) {
     })
     .to_string();
     assert_eq!(post_capture(&pool, &ingest, body).await, StatusCode::ACCEPTED);
+    assert_eq!(post_verdict(&pool, &ingest, "s_flow", "personal").await, StatusCode::OK);
 
     // GET open indicators -> includes our personal_repo / off_task indicators.
     let (status, v) = get_json(&pool, "/v1/orgs/acme/indicators?status=open", &session).await;
@@ -357,6 +372,9 @@ async fn indicators_are_idempotent_on_recapture(pool: PgPool) {
         StatusCode::ACCEPTED
     );
     assert_eq!(post_capture(&pool, &ingest, body).await, StatusCode::ACCEPTED);
+    // The AI verdict (personal) raises the indicators; posting it again must stay idempotent.
+    assert_eq!(post_verdict(&pool, &ingest, "s_idem", "personal").await, StatusCode::OK);
+    assert_eq!(post_verdict(&pool, &ingest, "s_idem", "personal").await, StatusCode::OK);
 
     // Each auto-indicator kind appears exactly once.
     assert_eq!(indicator_count(&pool, "s_idem", "personal_repo").await, 1);
@@ -372,6 +390,7 @@ async fn rollup_aggregates_per_employee(pool: PgPool) {
         "session_id":"s_roll","user_email":"dev@acme.com",
         "repo":{"host":"github.com","org":"acme-corp","name":"billing","path":"C:\\w"},
         "title":"work","cwd":"C:\\w",
+        "signals":{"pushed":true},
         "events":[
           {"seq":0,"ts":"2026-06-10T10:00:00Z","kind":"user_prompt","content":"PROJ-1"},
           {"seq":1,"ts":"2026-06-10T10:00:01Z","kind":"tool_call","tool_name":"Bash","target":"git commit -m x","content":"git commit -m x"},

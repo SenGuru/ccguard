@@ -10,6 +10,8 @@ use ccguard_core::event::CcEvent;
 pub struct PendingItem {
     pub session_id: String,
     pub prompt: String,
+    #[serde(default)]
+    pub input_digest: String,
 }
 
 /// Server response to `POST /v1/enroll` (mirrors `ccguard-server`'s `EnrollResp`).
