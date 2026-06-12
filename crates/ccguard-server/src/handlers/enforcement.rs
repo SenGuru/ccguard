@@ -26,13 +26,19 @@ pub const CONFORMAL_ALPHA: f32 = 0.10;
 pub const CONFORMAL_MIN_N: usize = 50;
 
 /// Human-reviewed triage rows: (model label, human label, confidence).
+///
+/// Bound to the tenant's CURRENT policy_version: a policy edit (which bumps the
+/// version) invalidates stale labels, so the calibration + precision gate never
+/// vouch for the judge using verdicts made under a different work definition.
 async fn human_labels(
     pool: &PgPool,
     tenant_id: &str,
 ) -> Result<Vec<(String, String, f32)>, sqlx::Error> {
     let rows = sqlx::query(
-        "select label, human_label, confidence from session_triage \
-         where tenant_id = $1 and human_reviewed = true and human_label is not null",
+        "select st.label, st.human_label, st.confidence from session_triage st \
+         where st.tenant_id = $1 and st.human_reviewed = true and st.human_label is not null \
+           and st.policy_version = coalesce( \
+             (select policy_version from tenant_triage_config where tenant_id = $1), 1)",
     )
     .bind(tenant_id)
     .fetch_all(pool)

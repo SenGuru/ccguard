@@ -40,6 +40,7 @@ pub fn app(pool: PgPool) -> Router {
         )
         .route("/dashboard/triage", get(web::triage_page))
         .route("/dashboard/triage/config", post(web::triage_config_set))
+        .route("/dashboard/triage/draft", post(web::triage_draft))
         .route("/dashboard/triage/run", post(web::triage_run))
         .route(
             "/dashboard/triage/:session_id/confirm",

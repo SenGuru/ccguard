@@ -13,6 +13,7 @@ mod transcript;
 
 use std::path::{Path, PathBuf};
 
+use chrono::Datelike;
 use clap::Parser;
 
 use crate::event::interaction_to_event;
@@ -250,26 +251,89 @@ fn run_attest(args: &Args, claude_dir: &Path, poster: &Poster) -> anyhow::Result
     Ok(())
 }
 
+/// Default hard cap on classify calls per seat per week — the backstop that keeps
+/// the monitor from ever eating the developer's own Claude Code quota.
+const WEEKLY_CLASSIFY_CAP: u32 = 100;
+/// Don't classify while the dev is actively coding (transcript touched recently).
+const IDLE_GATE_SECS: i64 = 300;
+
+/// Seconds since the most-recently-modified Claude Code transcript, or None if there
+/// are no transcripts (treated as idle).
+fn seconds_since_active(claude_dir: &Path) -> Option<i64> {
+    let now = std::time::SystemTime::now();
+    paths::list_transcripts(claude_dir)
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok()?.modified().ok())
+        .filter_map(|m| now.duration_since(m).ok())
+        .map(|d| d.as_secs() as i64)
+        .min()
+}
+
+/// Is `e` a rate-limit / over-quota failure (→ back off the whole sweep)?
+fn is_rate_limited(e: &anyhow::Error) -> bool {
+    let s = e.to_string().to_ascii_lowercase();
+    s.contains("429") || s.contains("rate limit") || s.contains("rate-limit") || s.contains("overloaded")
+}
+
 /// Triage UNCLASSIFIED sessions by running the machine's logged-in Claude Code on
 /// server-built prompts, posting each verdict back. No CCGuard API key — uses the
 /// company's existing Claude seat, and session content stays in the Claude Code
-/// channel they already authorized.
-fn run_triage(args: &Args, email: &str, poster: &Poster) -> anyhow::Result<()> {
-    let pending = poster.get_triage_pending(email, args.triage_limit)?;
+/// channel they already authorized. Idle-gated (never competes with the dev),
+/// weekly-budget-capped, and backs off on rate limits.
+fn run_triage(
+    args: &Args,
+    claude_dir: &Path,
+    email: &str,
+    poster: &Poster,
+    st: &mut State,
+    state_path: &Path,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let now_epoch = now.timestamp();
+    let iso = now.iso_week();
+    let week = format!("{}-W{:02}", iso.year(), iso.week());
+
+    if st.in_backoff(now_epoch) {
+        println!("CCGuard agent: triage backing off (rate-limited recently); skipping this run.");
+        return Ok(());
+    }
+    // Idle-gate: if Claude Code was touched in the last few minutes, the dev is
+    // working — defer the whole sweep, interactive latency is sacred.
+    if let Some(secs) = seconds_since_active(claude_dir) {
+        if secs < IDLE_GATE_SECS {
+            println!("CCGuard agent: Claude Code active {secs}s ago — deferring triage sweep.");
+            return Ok(());
+        }
+    }
+
+    let remaining = st.weekly_remaining(&week, WEEKLY_CLASSIFY_CAP);
+    if remaining == 0 {
+        println!("CCGuard agent: weekly classify budget reached ({WEEKLY_CLASSIFY_CAP}); deferring.");
+        st.save(state_path)?;
+        return Ok(());
+    }
+    let limit = args.triage_limit.min(remaining);
+
+    let pending = poster.get_triage_pending(email, limit)?;
     if pending.is_empty() {
         println!("CCGuard agent: no unclassified sessions to triage.");
         return Ok(());
     }
     println!(
-        "CCGuard agent: triaging {} session(s) via local Claude Code (model {})...",
+        "CCGuard agent: triaging {} session(s) via local Claude Code (model {}, {remaining} left in weekly budget)...",
         pending.len(),
         args.judge_model
     );
     let mut done = 0usize;
     let mut failed = 0usize;
     for item in &pending {
+        if st.weekly_remaining(&week, WEEKLY_CLASSIFY_CAP) == 0 {
+            println!("  weekly budget exhausted mid-sweep — stopping.");
+            break;
+        }
         match local_judge::classify(&item.prompt, &args.judge_model) {
             Ok(v) => {
+                st.record_classify(&week);
                 let body = serde_json::json!({
                     "session_id": item.session_id,
                     "label": v.label.as_str(),
@@ -293,11 +357,17 @@ fn run_triage(args: &Args, email: &str, poster: &Poster) -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
+                if is_rate_limited(&e) {
+                    st.set_backoff(now_epoch + 900); // 15 min
+                    eprintln!("  rate-limited — backing off 15 min, stopping sweep.");
+                    break;
+                }
                 eprintln!("  judge failed for {}: {e}", item.session_id);
                 failed += 1;
             }
         }
     }
+    st.save(state_path)?;
     println!(
         "CCGuard agent: triaged {done} session(s){}.",
         if failed > 0 { format!(", {failed} failed") } else { String::new() }
@@ -349,13 +419,14 @@ fn main() -> anyhow::Result<()> {
         email
     );
 
-    // Triage mode: classify the server's UNCLASSIFIED sessions via local Claude Code.
-    if args.triage {
-        return run_triage(&args, &email, &poster);
-    }
-
     let state_path = claude_dir.join("ccguard-agent-state.json");
     let mut st = State::load(&state_path);
+
+    // Triage mode: classify the server's UNCLASSIFIED sessions via local Claude Code.
+    if args.triage {
+        return run_triage(&args, &claude_dir, &email, &poster, &mut st, &state_path);
+    }
+
     let mut repos = repo::RepoCache::new();
     let mut sigs = signals::SignalCache::new(&args.corp_env);
 

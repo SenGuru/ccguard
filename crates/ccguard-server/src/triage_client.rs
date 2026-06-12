@@ -104,6 +104,39 @@ pub async fn classify_session(
     triage::parse_verdict(&reply_text).map_err(TriageClientError::Parse)
 }
 
+/// A plain (unstructured) completion — used for AI-assisted policy drafting. Returns
+/// the model's text. Needs `ANTHROPIC_API_KEY` (server-side path).
+pub async fn draft(
+    client: &reqwest::Client,
+    model: &str,
+    prompt: &str,
+) -> Result<String, TriageClientError> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .ok_or(TriageClientError::NoApiKey)?;
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 700,
+        "messages": [{ "role": "user", "content": prompt }],
+    });
+    let resp = client
+        .post(format!("{}/v1/messages", base_url()))
+        .header("x-api-key", api_key)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(TriageClientError::Http)?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(TriageClientError::Http)?;
+    if !status.is_success() {
+        return Err(TriageClientError::Status(status.as_u16(), text.chars().take(300).collect()));
+    }
+    first_text_block(&text).ok_or(TriageClientError::NoText)
+}
+
 /// Pull the concatenated text from a Messages API reply body. The response shape
 /// is `{ "content": [ { "type": "text", "text": "..." }, ... ] }`.
 fn first_text_block(body: &str) -> Option<String> {

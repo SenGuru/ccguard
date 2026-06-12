@@ -12,6 +12,15 @@ pub struct State {
     /// files without this field still load. Default per-file watermark is -1 (nothing sent).
     #[serde(default)]
     pub capture_seqs: HashMap<String, i64>,
+    /// Triage (classification) budget bookkeeping — bounds how much of the dev's
+    /// Claude Code weekly quota the agent may spend classifying. `serde(default)`.
+    #[serde(default)]
+    pub triage_week: String,
+    #[serde(default)]
+    pub triage_count: u32,
+    /// Unix-epoch seconds until which the sweep is backing off (0 = none).
+    #[serde(default)]
+    pub triage_backoff_until: i64,
 }
 
 impl State {
@@ -42,6 +51,33 @@ impl State {
     /// Persist the capture high-water mark for `file` (only confirmed-sent seqs should be set).
     pub fn set_capture_watermark(&mut self, file: &str, seq: i64) {
         self.capture_seqs.insert(file.to_string(), seq);
+    }
+
+    /// Remaining classify budget for `week` (rolls over when the week key changes).
+    pub fn weekly_remaining(&mut self, week: &str, cap: u32) -> u32 {
+        if self.triage_week != week {
+            self.triage_week = week.to_string();
+            self.triage_count = 0;
+        }
+        cap.saturating_sub(self.triage_count)
+    }
+
+    /// Count one classify call against this week's budget.
+    pub fn record_classify(&mut self, week: &str) {
+        if self.triage_week != week {
+            self.triage_week = week.to_string();
+            self.triage_count = 0;
+        }
+        self.triage_count = self.triage_count.saturating_add(1);
+    }
+
+    /// Whether the sweep is currently backing off (e.g. after a rate-limit).
+    pub fn in_backoff(&self, now_epoch: i64) -> bool {
+        self.triage_backoff_until > now_epoch
+    }
+
+    pub fn set_backoff(&mut self, until_epoch: i64) {
+        self.triage_backoff_until = until_epoch;
     }
 }
 

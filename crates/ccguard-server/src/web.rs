@@ -125,7 +125,7 @@ a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline
 table{width:100%;border-collapse:collapse;margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}\
 th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}thead th{font-family:'Space Grotesk';font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em;font-weight:600}tr:last-child td{border-bottom:0}\
 .badge{padding:3px 9px;border-radius:7px;font-size:12px;font-weight:600}\
-.work,.compliant,.on_task{background:#e6f6ee;color:#067a4e}.personal,.personal_repo{background:#fef3df;color:#a96a00}.unknown,.stale,.low{background:#eef1f6;color:#6b7488}\
+.work,.compliant,.on_task{background:#e6f6ee;color:#067a4e}.personal,.personal_repo{background:#fef3df;color:#a96a00}.unknown,.stale,.low{background:#eef1f6;color:#6b7488}.pending{background:#eaf0ff;color:#1e47c8}\
 .high,.tampered,.noncompliant_account,.off_task{background:#fde8e8;color:#b42318}.medium,.drifted,.review{background:#fef3df;color:#a96a00}.non_engineer_coding{background:#f1e9fb;color:#7a4fb5}\
 .finding{font-size:12px;margin:4px 0 0;color:#a96a00}\
 .ev{border:1px solid var(--line);border-left:3px solid var(--line);margin:8px 0;padding:10px 14px;border-radius:8px;background:#fff}\
@@ -1427,27 +1427,45 @@ pub async fn roles_set(
 /// Render the Triage page with an optional result banner. Shows API-key status,
 /// the tenant's work-definition config (owner/admin editable), how many sessions
 /// are still unclassified, a "run" action, and the most recent verdicts.
-async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) -> Html<String> {
-    let cfg = crate::handlers::triage::load_config(pool, &user.tenant_id)
+async fn render_triage(
+    pool: &PgPool,
+    user: &WebUser,
+    banner: Option<Markup>,
+    prefill: Option<(String, String, String)>,
+) -> Html<String> {
+    let mut cfg = crate::handlers::triage::load_config(pool, &user.tenant_id)
         .await
         .unwrap_or_default();
+    // Prefill the form (from a starter template, or an AI draft) so the admin can
+    // edit a noun or two and save.
+    if let Some((bd, wa, pe)) = prefill {
+        cfg.business_desc = bd;
+        cfg.work_allowed = wa;
+        cfg.personal_examples = pe;
+    }
     let can_edit = user.role == "owner" || user.role == "admin";
     let key_present = crate::triage_client::api_key_present();
 
-    // How many sessions are still unclassified (and not yet triaged).
+    // Sessions awaiting the AI judge ('pending' — the agent's local Claude Code, or
+    // the opt-in server Run, will resolve them).
     let unclassified: i64 = sqlx::query_scalar(
-        "select count(*) from captured_sessions s \
-         left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
-         where s.tenant_id=$1 and s.classification='unknown' and t.session_id is null",
+        "select count(*) from captured_sessions where tenant_id=$1 and classification='pending'",
     )
     .bind(&user.tenant_id)
     .fetch_one(pool)
     .await
     .unwrap_or(0);
 
-    // Verdict tallies + recent verdicts.
+    // Conformal calibration regime (drives the banner).
+    let calib = crate::handlers::enforcement::load_calibration(pool, &user.tenant_id)
+        .await
+        .unwrap_or(ccguard_core::conformal::Calibration { threshold: 1.01, n: 0, alpha: 0.1, usable: false });
+    let regime = calib.regime();
+
+    // Verdict tallies + recent verdicts (+ health inputs).
     let trows = sqlx::query(
         "select t.session_id, t.label, t.confidence, t.reason, t.enforceable, t.resolved_by, \
+                t.mixed, t.matched_clause, t.gaming_flags, t.human_label, \
                 s.title, s.repo_org, s.repo_name \
          from session_triage t \
          left join captured_sessions s on s.tenant_id=t.tenant_id and s.session_id=t.session_id \
@@ -1458,20 +1476,96 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
     .await
     .unwrap_or_default();
     let (mut tw, mut tp, mut tu) = (0i64, 0i64, 0i64);
+    let mut health_rows = Vec::new();
     for r in &trows {
-        match r.get::<String, _>("label").as_str() {
+        let label: String = r.get("label");
+        match label.as_str() {
             "work" => tw += 1,
             "personal" => tp += 1,
             _ => tu += 1,
         }
+        health_rows.push(ccguard_core::policy_health::HealthRow {
+            label,
+            human_label: r.get("human_label"),
+            matched_clause: r.get::<Option<String>, _>("matched_clause").is_some(),
+        });
     }
+    let health = ccguard_core::policy_health::health(&health_rows);
+
+    // Random spot-check: a few work-labeled sessions not yet human-reviewed. The
+    // gamer can't predict which work-labeled session gets human eyes — this is the
+    // real anti-gaming pressure, and it keeps the calibration set fresh + balanced.
+    let spot = sqlx::query(
+        "select t.session_id, s.title, s.repo_org, s.repo_name from session_triage t \
+         left join captured_sessions s on s.tenant_id=t.tenant_id and s.session_id=t.session_id \
+         where t.tenant_id=$1 and t.label='work' and t.human_reviewed=false \
+         order by random() limit 5",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Top reasons the AI got it wrong (from reviewer relabels) → refine the description.
+    let reasons = sqlx::query(
+        "select relabel_reason, count(*) c from session_triage \
+         where tenant_id=$1 and relabel_reason is not null and relabel_reason <> '' \
+         group by relabel_reason order by c desc limit 5",
+    )
+    .bind(&user.tenant_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
 
     page(
         "Triage",
         html! {
             (nav())
-            h1 { "LLM triage — classify the unclassified" }
+            h1 { "Classification — AI judges against your business" }
             @if let Some(b) = banner { (b) }
+            @match regime {
+                ccguard_core::conformal::CalibrationRegime::Degenerate => {
+                    div.card style="border-color:#b42318;background:#fde8e8" {
+                        b { "⚠ The AI is confidently wrong on your data." }
+                        " Every session is going to manual review. Your business description is "
+                        "almost certainly the problem — make it more concrete (what does your work "
+                        "look like in code?) and re-save."
+                    }
+                }
+                ccguard_core::conformal::CalibrationRegime::Cold => {
+                    div.card style="background:var(--accent-wash);border-color:var(--accent)" {
+                        b { "The AI is still learning your judgment." }
+                        " It's labeling for visibility only and holding back no one. As you Confirm/"
+                        "Relabel verdicts (≈50 reviews), it starts saying " i { "unsure" } " when it isn't "
+                        "confident by your standards."
+                    }
+                }
+                ccguard_core::conformal::CalibrationRegime::Calibrated => {
+                    div.card style="background:#e6f6ee;border-color:#067a4e" {
+                        b { "Calibrated to your judgment." }
+                        " The AI now abstains to review below "
+                        (format!("{:.0}%", calib.threshold.min(1.0) * 100.0)) " confidence (fit on "
+                        (calib.n) " of your reviews)."
+                    }
+                }
+            }
+            @if health.n > 0 {
+                div.card {
+                    h3 { "How well is it reading your business?" }
+                    p {
+                        "Decisiveness: " b { (format!("{:.0}%", (1.0 - health.unsure_rate) * 100.0)) } " decided"
+                        @if health.unsure_rate > 0.4 { " — " span.badge.medium { "high unsure" } " your description may be too vague; add concrete examples of your work." }
+                        " · clause-matched on " (format!("{:.0}%", (1.0 - health.no_clause_rate) * 100.0)) " of decided"
+                    }
+                    @if health.n_human > 0 {
+                        p {
+                            "Agreement with your " (health.n_human) " correction(s): "
+                            b { (format!("{:.0}%", health.agreement_rate * 100.0)) }
+                            @if health.agreement_rate < 0.7 { " — " span.badge.high { "drifting from your calls" } }
+                        }
+                    }
+                }
+            }
             div.card {
                 p {
                     "When the deterministic signal cascade can't tell whether a session is work or personal, "
@@ -1513,6 +1607,16 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                 div.card {
                     h3 { "Your business — what the AI judges against" }
                     p { small style="color:var(--ink-3)" { "Plain English. This is the classifier: the AI reads each session against your description. Be concrete about what your work looks like in code." } }
+                    form method="post" action="/dashboard/triage/draft" style="margin:8px 0" {
+                        "Describe your business in one sentence — AI drafts the rest: " br;
+                        input type="text" name="one_liner" style="width:60%" placeholder="e.g. I run a 3-person Shopify agency building client storefronts";
+                        " " button type="submit" style="padding:6px 12px" { "Draft it" }
+                    }
+                    p { small { "…or start from a template (then edit): " }
+                        @for t in ccguard_core::policy_template::all() {
+                            " " a.badge.unknown href={"/dashboard/triage?template=" (t.key)} style="text-decoration:none" { (t.name) }
+                        }
+                    }
                     form method="post" action="/dashboard/triage/config" {
                         p {
                             label {
@@ -1559,6 +1663,8 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                             @let title: Option<String> = r.get("title");
                             @let org: Option<String> = r.get("repo_org");
                             @let name: Option<String> = r.get("repo_name");
+                            @let mixed: bool = r.get("mixed");
+                            @let flags: Vec<String> = r.get("gaming_flags");
                             tr {
                                 td {
                                     a href={"/dashboard/sessions/" (sid)} {
@@ -1568,7 +1674,11 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                                     @let repo = format!("{}/{}", org.clone().unwrap_or_default(), name.clone().unwrap_or_default());
                                     @if repo != "/" { br; small style="color:var(--ink-3)" { (repo) } }
                                 }
-                                td { span.badge.(triage_label_class(&label)) { (label) } }
+                                td {
+                                    span.badge.(triage_label_class(&label)) { (label) }
+                                    @if mixed { " " span.badge.medium { "mixed" } }
+                                    @if !flags.is_empty() { " " span.badge.high title="structural signal contradicts this label — review" { "⚑ contested" } }
+                                }
                                 td { (format!("{:.0}%", conf * 100.0)) }
                                 td {
                                     @if enf { span.badge.work { "yes" } @if by == "human" { " (confirmed)" } }
@@ -1589,7 +1699,65 @@ async fn render_triage(pool: &PgPool, user: &WebUser, banner: Option<Markup>) ->
                                                 option value="personal" { "personal" }
                                                 option value="unsure" { "unsure" }
                                             }
+                                            select name="reason" style="padding:3px 6px;font-size:12px" {
+                                                option value="" { "why?" }
+                                                option value="unfamiliar_name" { "unfamiliar name" }
+                                                option value="internal_tooling" { "internal tooling" }
+                                                option value="real_personal" { "real personal project" }
+                                                option value="other" { "other" }
+                                            }
                                             button type="submit" style="padding:4px 9px;font-size:12px;background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "Relabel" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            @if !reasons.is_empty() {
+                div.card {
+                    h3 { "Top reasons the AI got it wrong" }
+                    p { small style="color:var(--ink-3)" { "From your relabels — the fix is usually a sentence in your business description." } }
+                    ul {
+                        @for r in &reasons {
+                            @let why: String = r.get("relabel_reason");
+                            @let c: i64 = r.get("c");
+                            li { (why.replace('_', " ")) " — " b { (c) } "×"
+                                @if why == "internal_tooling" { " · try adding: " i { "\"Internal tools like our deploy scripts are company work.\"" } }
+                                @if why == "unfamiliar_name" { " · try adding: " i { "\"New or unfamiliar repos/clients are still our work.\"" } }
+                            }
+                        }
+                    }
+                }
+            }
+            @if can_edit && !spot.is_empty() {
+                div.card {
+                    h3 { "Spot-check — random work-labeled sessions" }
+                    p { small style="color:var(--ink-3)" { "A fresh random sample for a human look. Confirm if the AI got it right, or relabel. Keeps the AI honest (no one can predict which session you'll check)." } }
+                    table {
+                        thead { tr { th{"Session"} th{} } }
+                        tbody {
+                            @for r in &spot {
+                                @let sid: String = r.get("session_id");
+                                @let title: Option<String> = r.get("title");
+                                @let org: Option<String> = r.get("repo_org");
+                                @let name: Option<String> = r.get("repo_name");
+                                tr {
+                                    td {
+                                        a href={"/dashboard/sessions/" (sid)} { (title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| sid.chars().take(8).collect())) }
+                                        @let repo = format!("{}/{}", org.clone().unwrap_or_default(), name.clone().unwrap_or_default());
+                                        @if repo != "/" { " " small style="color:var(--ink-3)" { "(" (repo) ")" } }
+                                    }
+                                    td {
+                                        form method="post" action={"/dashboard/triage/" (sid) "/confirm"} style="display:inline" {
+                                            button type="submit" style="padding:4px 9px;font-size:12px" { "✓ correct (work)" }
+                                        }
+                                        " "
+                                        form method="post" action={"/dashboard/triage/" (sid) "/relabel"} style="display:inline" {
+                                            input type="hidden" name="label" value="personal";
+                                            input type="hidden" name="reason" value="real_personal";
+                                            button type="submit" style="padding:4px 9px;font-size:12px;background:#fff;color:var(--accent-ink);border:1px solid var(--line)" { "actually personal" }
                                         }
                                     }
                                 }
@@ -1612,8 +1780,63 @@ fn triage_label_class(label: &str) -> &'static str {
 }
 
 /// GET /dashboard/triage
-pub async fn triage_page(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
-    render_triage(&pool, &user, None).await
+pub async fn triage_page(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Html<String> {
+    let prefill = q.get("template").and_then(|k| ccguard_core::policy_template::by_key(k)).map(|t| {
+        (
+            t.business_desc.to_string(),
+            t.work_allowed.to_string(),
+            t.personal_examples.to_string(),
+        )
+    });
+    render_triage(&pool, &user, None, prefill).await
+}
+
+#[derive(Deserialize)]
+pub struct DraftForm {
+    pub one_liner: String,
+}
+
+/// POST /dashboard/triage/draft — AI-assisted drafting: expand the owner's one
+/// sentence into the three policy fields (prefilled for them to edit + save). Needs
+/// a server API key (the admin's browser can't run an employee's local Claude Code);
+/// without one, point them at the templates. Owner/admin only.
+pub async fn triage_draft(
+    user: WebUser,
+    State(pool): State<PgPool>,
+    Form(f): Form<DraftForm>,
+) -> Result<Response, AppError> {
+    if user.role != "owner" && user.role != "admin" {
+        return Err(AppError::Forbidden("owner or admin role required"));
+    }
+    if f.one_liner.trim().is_empty() {
+        return Ok(Redirect::to("/dashboard/triage").into_response());
+    }
+    if !crate::triage_client::api_key_present() {
+        let banner = html! { div.card style="border-color:#a96a00;background:#fef3df" {
+            "AI drafting needs a server API key (" code { "ANTHROPIC_API_KEY" } "). Pick a starter template below instead — it's the same result in one click."
+        }};
+        return Ok(render_triage(&pool, &user, Some(banner), None).await.into_response());
+    }
+    let prompt = ccguard_core::policy_draft::draft_prompt(&f.one_liner);
+    let client = reqwest::Client::new();
+    let (banner, prefill) = match crate::triage_client::draft(&client, "claude-haiku-4-5", &prompt).await {
+        Ok(text) => match ccguard_core::policy_draft::parse_draft(&text) {
+            Some(triple) => (
+                html! { div.card style="background:#e6f6ee;border-color:#067a4e" { "Drafted from your description — review and edit below, then save." } },
+                Some(triple),
+            ),
+            None => (html! { div.card.err { "Couldn't parse a draft — try a template." } }, None),
+        },
+        Err(e) => (
+            html! { div.card.err { "Drafting failed: " (e.to_string()) " — try a template." } },
+            None,
+        ),
+    };
+    Ok(render_triage(&pool, &user, Some(banner), prefill).await.into_response())
 }
 
 #[derive(Deserialize)]
@@ -1741,7 +1964,7 @@ pub async fn triage_run(user: WebUser, State(pool): State<PgPool>) -> Result<Res
             }
         }
     };
-    Ok(render_triage(&pool, &user, Some(banner)).await.into_response())
+    Ok(render_triage(&pool, &user, Some(banner), None).await.into_response())
 }
 
 /// POST /dashboard/triage/:session_id/confirm — a human confirms a verdict so it
@@ -1771,6 +1994,8 @@ pub async fn triage_confirm(
 #[derive(Deserialize)]
 pub struct RelabelForm {
     pub label: String, // work | personal | unsure
+    #[serde(default)]
+    pub reason: String, // why the AI was wrong (unfamiliar_name / internal_tooling / ...)
 }
 
 /// POST /dashboard/triage/:session_id/relabel — a reviewer DISAGREES and records
@@ -1793,15 +2018,17 @@ pub async fn triage_relabel(
     };
     // A human-confirmed personal is enforceable; otherwise not.
     let enforceable = label == "personal";
+    let reason = (!f.reason.trim().is_empty()).then(|| f.reason.trim().to_string());
     sqlx::query(
         "update session_triage set human_reviewed = true, human_label = $3, \
-           resolved_by = 'human', enforceable = $4, updated_at = now() \
+           resolved_by = 'human', enforceable = $4, relabel_reason = $5, updated_at = now() \
          where tenant_id = $1 and session_id = $2",
     )
     .bind(&user.tenant_id)
     .bind(&session_id)
     .bind(label)
     .bind(enforceable)
+    .bind(&reason)
     .execute(&pool)
     .await?;
     // Mirror the human's definite label onto the session (unsure → unclassified).
