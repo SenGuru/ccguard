@@ -21,7 +21,10 @@ pub fn gather(cwd: &str, corp_env_name: &str) -> RawSignals {
     s.remotes = git_remotes(cwd);
 
     // Pushed = current branch has an upstream.
-    s.pushed = git_ok(cwd, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+    s.pushed = git_ok(
+        cwd,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
 
     // HEAD committer email + signature status.
     s.committer_email = git_out(cwd, &["log", "-1", "--format=%ce"]).filter(|e| !e.is_empty());
@@ -38,7 +41,8 @@ pub fn gather(cwd: &str, corp_env_name: &str) -> RawSignals {
         .unwrap_or(false);
 
     // Branch (for ticket-prefix matching server-side).
-    s.branch = git_out(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD" && !b.is_empty());
+    s.branch = git_out(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .filter(|b| b != "HEAD" && !b.is_empty());
 
     // Monorepo leaf: cwd inside a repo but not at its root.
     if let Some(root) = git_out(cwd, &["rev-parse", "--show-toplevel"]) {
@@ -73,7 +77,9 @@ fn is_signed(g: &str) -> bool {
 
 fn same_path(a: &str, b: &str) -> bool {
     fn norm(p: &str) -> String {
-        p.replace('\\', "/").trim_end_matches('/').to_ascii_lowercase()
+        p.replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
     }
     norm(a) == norm(b)
 }
@@ -107,7 +113,10 @@ fn git_remotes(cwd: &str) -> Vec<RemoteRef> {
         // "origin\thttps://github.com/acme/repo.git (fetch)"
         let url = line.split_whitespace().nth(1);
         if let Some(id) = url.and_then(parse_remote_url) {
-            let r = RemoteRef { host: id.host, org: id.org };
+            let r = RemoteRef {
+                host: id.host,
+                org: id.org,
+            };
             if !refs.contains(&r) {
                 refs.push(r);
             }
@@ -140,7 +149,10 @@ pub fn registry_fingerprints(dir: &Path) -> Vec<String> {
                     out.push("codeartifact".into());
                 }
                 // "@scope:registry=..."
-                if let Some(scope) = l.strip_prefix('@').and_then(|r| r.split_once(':').map(|(s, _)| s)) {
+                if let Some(scope) = l
+                    .strip_prefix('@')
+                    .and_then(|r| r.split_once(':').map(|(s, _)| s))
+                {
                     out.push(format!("@{scope}"));
                 }
             }
@@ -153,13 +165,19 @@ pub fn registry_fingerprints(dir: &Path) -> Vec<String> {
             for key in ["dependencies", "devDependencies", "peerDependencies"] {
                 if let Some(obj) = v.get(key).and_then(|d| d.as_object()) {
                     for name in obj.keys() {
-                        if let Some(scope) = name.strip_prefix('@').and_then(|r| r.split('/').next()) {
+                        if let Some(scope) =
+                            name.strip_prefix('@').and_then(|r| r.split('/').next())
+                        {
                             out.push(format!("@{scope}"));
                         }
                     }
                 }
             }
-            if let Some(reg) = v.get("publishConfig").and_then(|p| p.get("registry")).and_then(|r| r.as_str()) {
+            if let Some(reg) = v
+                .get("publishConfig")
+                .and_then(|p| p.get("registry"))
+                .and_then(|r| r.as_str())
+            {
                 if let Some(host) = registry_host(&format!("registry={reg}")) {
                     out.push(host);
                 }
@@ -250,7 +268,11 @@ mod tests {
     fn fingerprints_pick_up_scope_and_artifactory() {
         let dir = std::env::temp_dir().join(format!("ccg_sig_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(".npmrc"), "@acme:registry=https://artifactory.acme.com/api/npm/\n").unwrap();
+        std::fs::write(
+            dir.join(".npmrc"),
+            "@acme:registry=https://artifactory.acme.com/api/npm/\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.join("package.json"),
             r#"{"dependencies":{"@acme/ui":"1.0.0","react":"18"}}"#,
@@ -259,7 +281,9 @@ mod tests {
         let fp = registry_fingerprints(&dir);
         std::fs::remove_dir_all(&dir).ok();
         assert!(fp.iter().any(|f| f == "@acme"));
-        assert!(fp.iter().any(|f| f == "artifactory" || f == "artifactory.acme.com"));
+        assert!(fp
+            .iter()
+            .any(|f| f == "artifactory" || f == "artifactory.acme.com"));
     }
 
     #[test]

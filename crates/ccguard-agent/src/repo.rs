@@ -76,7 +76,10 @@ mod tests {
 
     #[test]
     fn maps_remote_to_host_org_name() {
-        let r = repo_from_remote(Some("git@github.com:acme-corp/billing.git"), "C:\\work\\billing");
+        let r = repo_from_remote(
+            Some("git@github.com:acme-corp/billing.git"),
+            "C:\\work\\billing",
+        );
         assert_eq!(r.host.as_deref(), Some("github.com"));
         assert_eq!(r.org.as_deref(), Some("acme-corp"));
         assert_eq!(r.name.as_deref(), Some("billing"));

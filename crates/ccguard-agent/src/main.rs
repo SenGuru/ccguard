@@ -1,11 +1,11 @@
 mod chunk;
 mod enforce_paths;
 mod event;
+mod local_judge;
 mod parse;
 mod paths;
 mod poster;
 mod pricing;
-mod local_judge;
 mod repo;
 mod signals;
 mod state;
@@ -64,6 +64,14 @@ struct Args {
     /// Code is active. For testing / an explicit admin-triggered run.
     #[arg(long)]
     force: bool,
+    /// Service mode: run forever — capture frequently (cheap, keeps secret-scanning
+    /// fresh) and run the triage pass once per calendar day during an idle window
+    /// (with catch-up if a day was missed). This is how the installed agent runs.
+    #[arg(long)]
+    service: bool,
+    /// (service) Seconds between capture passes. Default 900 (15 min).
+    #[arg(long, default_value_t = 900)]
+    capture_interval: u64,
     /// Attestation mode: enroll this device, fetch the expected policy, evaluate the on-disk
     /// managed-settings, and POST the attestation to /v1/attest. Takes priority over harvest modes.
     #[arg(long)]
@@ -276,7 +284,10 @@ fn seconds_since_active(claude_dir: &Path) -> Option<i64> {
 /// Is `e` a rate-limit / over-quota failure (→ back off the whole sweep)?
 fn is_rate_limited(e: &anyhow::Error) -> bool {
     let s = e.to_string().to_ascii_lowercase();
-    s.contains("429") || s.contains("rate limit") || s.contains("rate-limit") || s.contains("overloaded")
+    s.contains("429")
+        || s.contains("rate limit")
+        || s.contains("rate-limit")
+        || s.contains("overloaded")
 }
 
 /// Triage UNCLASSIFIED sessions by running the machine's logged-in Claude Code on
@@ -314,7 +325,9 @@ fn run_triage(
 
     let remaining = st.weekly_remaining(&week, WEEKLY_CLASSIFY_CAP);
     if remaining == 0 {
-        println!("CCGuard agent: weekly classify budget reached ({WEEKLY_CLASSIFY_CAP}); deferring.");
+        println!(
+            "CCGuard agent: weekly classify budget reached ({WEEKLY_CLASSIFY_CAP}); deferring."
+        );
         st.save(state_path)?;
         return Ok(());
     }
@@ -377,7 +390,11 @@ fn run_triage(
     st.save(state_path)?;
     println!(
         "CCGuard agent: triaged {done} session(s){}.",
-        if failed > 0 { format!(", {failed} failed") } else { String::new() }
+        if failed > 0 {
+            format!(", {failed} failed")
+        } else {
+            String::new()
+        }
     );
     Ok(())
 }
@@ -434,138 +451,240 @@ fn main() -> anyhow::Result<()> {
         return run_triage(&args, &claude_dir, &email, &poster, &mut st, &state_path);
     }
 
+    // Service mode: long-running loop (frequent capture + daily idle-gated triage).
+    if args.service {
+        return run_service(&args, &claude_dir, &email, &poster, &mut st, &state_path);
+    }
+
     let mut repos = repo::RepoCache::new();
     let mut sigs = signals::SignalCache::new(&args.corp_env);
 
     if args.capture {
-        // Full-capture mode: parse complete transcripts, chunk by content budget, and post
-        // CapturedSessions. Capture reads the WHOLE file each run (the parser needs all lines
-        // for session metadata/seqs); the per-file seq watermark — advanced only on confirmed
-        // 202s — prevents redundant re-POSTs and silent loss of an unsent tail.
-        let mut captured = 0usize; // files that fully sent (all chunks 202)
-        let mut failed = 0usize; // files with an unsent tail (will retry next run)
-        for file in paths::list_transcripts(&claude_dir) {
-            let key = file.to_string_lossy().to_string();
-            let content = match std::fs::read_to_string(&file) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if content.is_empty() {
-                continue;
-            }
-            let mut session = transcript::parse_session(&content, None);
-
-            // Populate identity + repo
-            session.user_email = email.clone();
-            if let Some(cwd) = session.cwd.as_deref() {
-                session.repo = repos.resolve(cwd);
-                // Content-free provenance signals (git + manifest config) for this dir.
-                session.signals = Some(sigs.resolve(cwd));
-            }
-            if session.session_id.is_empty() {
-                // Use file stem as fallback session id
-                session.session_id = file
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-            }
-
-            // Only send events past the confirmed-sent high-water mark for this file.
-            let wm = st.capture_watermark(&key);
-            let new_events: Vec<_> = session
-                .events
-                .iter()
-                .filter(|e| e.seq > wm)
-                .cloned()
-                .collect();
-            if new_events.is_empty() {
-                continue;
-            }
-            let trimmed = ccguard_core::capture::CapturedSession {
-                events: new_events,
-                ..session.clone()
-            };
-
-            let chunks = chunk::chunk_session(&trimmed, chunk::CHUNK_CONTENT_BUDGET);
-            let mut max_sent = wm;
-            let mut had_error = false;
-            for c in &chunks {
-                let chunk_max = c.events.iter().map(|e| e.seq).max();
-                match poster.post_capture(c) {
-                    Ok(202) => {
-                        if let Some(m) = chunk_max {
-                            if m > max_sent {
-                                max_sent = m;
-                            }
-                        }
-                    }
-                    Ok(code) => {
-                        eprintln!("  POST capture returned HTTP {code} for {key} — stopping this file (will retry)");
-                        had_error = true;
-                        break;
-                    }
-                    Err(e) => {
-                        eprintln!("  POST capture error for {key}: {e} — stopping this file (will retry)");
-                        had_error = true;
-                        break;
-                    }
-                }
-            }
-
-            // Persist only the confirmed-sent high-water mark — no silent loss.
-            if max_sent > wm {
-                st.set_capture_watermark(&key, max_sent);
-            }
-            if had_error {
-                failed += 1;
-            } else {
-                captured += 1;
-            }
-        }
-        st.save(&state_path)?;
-        if failed > 0 {
-            println!(
-                "CCGuard agent: captured {captured} session(s), {failed} had send errors (will retry)."
-            );
-        } else {
-            println!("CCGuard agent: captured {captured} session(s).");
-        }
+        run_capture_once(
+            &claude_dir,
+            &email,
+            &poster,
+            &mut st,
+            &state_path,
+            &mut repos,
+            &mut sigs,
+        )?;
     } else {
-        // Default mode: token-event metadata only (unchanged from Plans 1–4)
-        let mut sent = 0usize;
-        let mut skipped = 0usize;
-        for file in paths::list_transcripts(&claude_dir) {
-            let key = file.to_string_lossy().to_string();
-            let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if chunk.is_empty() {
-                continue;
-            }
-            for interaction in parse_transcript(&chunk, None) {
-                match interaction_to_event(&interaction, &email, &mut repos) {
-                    Some(ev) => match poster.post(&ev) {
-                        Ok(202) => sent += 1,
-                        Ok(code) => {
-                            eprintln!("  POST returned HTTP {code}");
-                            skipped += 1;
-                        }
-                        Err(e) => {
-                            eprintln!("  POST error: {e}");
-                            skipped += 1;
-                        }
-                    },
-                    None => skipped += 1,
-                }
-            }
-            st.set(&key, new_off);
-        }
-        st.save(&state_path)?;
-        println!("CCGuard agent: sent {sent} event(s), skipped {skipped}.");
+        run_token_events_once(
+            &claude_dir,
+            &email,
+            &poster,
+            &mut st,
+            &state_path,
+            &mut repos,
+        )?;
     }
 
     Ok(())
+}
+
+/// One full-capture pass: parse complete transcripts, chunk by content budget, and
+/// post CapturedSessions. Reads the WHOLE file each run (the parser needs all lines
+/// for session metadata/seqs); the per-file seq watermark — advanced only on
+/// confirmed 202s — prevents redundant re-POSTs and silent loss of an unsent tail.
+#[allow(clippy::too_many_arguments)]
+fn run_capture_once(
+    claude_dir: &Path,
+    email: &str,
+    poster: &Poster,
+    st: &mut State,
+    state_path: &Path,
+    repos: &mut repo::RepoCache,
+    sigs: &mut signals::SignalCache,
+) -> anyhow::Result<()> {
+    let mut captured = 0usize; // files that fully sent (all chunks 202)
+    let mut failed = 0usize; // files with an unsent tail (will retry next run)
+    for file in paths::list_transcripts(claude_dir) {
+        let key = file.to_string_lossy().to_string();
+        let content = match std::fs::read_to_string(&file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if content.is_empty() {
+            continue;
+        }
+        let mut session = transcript::parse_session(&content, None);
+
+        // Populate identity + repo
+        session.user_email = email.to_string();
+        if let Some(cwd) = session.cwd.as_deref() {
+            session.repo = repos.resolve(cwd);
+            // Content-free provenance signals (git + manifest config) for this dir.
+            session.signals = Some(sigs.resolve(cwd));
+        }
+        if session.session_id.is_empty() {
+            // Use file stem as fallback session id
+            session.session_id = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+        }
+
+        // Only send events past the confirmed-sent high-water mark for this file.
+        let wm = st.capture_watermark(&key);
+        let new_events: Vec<_> = session
+            .events
+            .iter()
+            .filter(|e| e.seq > wm)
+            .cloned()
+            .collect();
+        if new_events.is_empty() {
+            continue;
+        }
+        let trimmed = ccguard_core::capture::CapturedSession {
+            events: new_events,
+            ..session.clone()
+        };
+
+        let chunks = chunk::chunk_session(&trimmed, chunk::CHUNK_CONTENT_BUDGET);
+        let mut max_sent = wm;
+        let mut had_error = false;
+        for c in &chunks {
+            let chunk_max = c.events.iter().map(|e| e.seq).max();
+            match poster.post_capture(c) {
+                Ok(202) => {
+                    if let Some(m) = chunk_max {
+                        if m > max_sent {
+                            max_sent = m;
+                        }
+                    }
+                }
+                Ok(code) => {
+                    eprintln!("  POST capture returned HTTP {code} for {key} — stopping this file (will retry)");
+                    had_error = true;
+                    break;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "  POST capture error for {key}: {e} — stopping this file (will retry)"
+                    );
+                    had_error = true;
+                    break;
+                }
+            }
+        }
+
+        // Persist only the confirmed-sent high-water mark — no silent loss.
+        if max_sent > wm {
+            st.set_capture_watermark(&key, max_sent);
+        }
+        if had_error {
+            failed += 1;
+        } else {
+            captured += 1;
+        }
+    }
+    st.save(state_path)?;
+    if failed > 0 {
+        println!(
+            "CCGuard agent: captured {captured} session(s), {failed} had send errors (will retry)."
+        );
+    } else {
+        println!("CCGuard agent: captured {captured} session(s).");
+    }
+    Ok(())
+}
+
+/// One token-event (metadata-only, legacy) pass — unchanged from Plans 1-4.
+fn run_token_events_once(
+    claude_dir: &Path,
+    email: &str,
+    poster: &Poster,
+    st: &mut State,
+    state_path: &Path,
+    repos: &mut repo::RepoCache,
+) -> anyhow::Result<()> {
+    let mut sent = 0usize;
+    let mut skipped = 0usize;
+    for file in paths::list_transcripts(claude_dir) {
+        let key = file.to_string_lossy().to_string();
+        let (chunk, new_off) = match read_since(&file, st.offset(&key)) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if chunk.is_empty() {
+            continue;
+        }
+        for interaction in parse_transcript(&chunk, None) {
+            match interaction_to_event(&interaction, email, repos) {
+                Some(ev) => match poster.post(&ev) {
+                    Ok(202) => sent += 1,
+                    Ok(code) => {
+                        eprintln!("  POST returned HTTP {code}");
+                        skipped += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("  POST error: {e}");
+                        skipped += 1;
+                    }
+                },
+                None => skipped += 1,
+            }
+        }
+        st.set(&key, new_off);
+    }
+    st.save(state_path)?;
+    println!("CCGuard agent: sent {sent} event(s), skipped {skipped}.");
+    Ok(())
+}
+
+/// Service mode: run forever. Capture every `capture_interval` seconds (cheap —
+/// keeps the server's secret-scanning + token meter fresh); run the triage pass
+/// once per calendar day during an idle window, with catch-up if a day was missed
+/// (laptop asleep/off). Both passes already self-gate (capture is idempotent via
+/// the watermark; triage is idle-gated + weekly-budget-capped + backs off on
+/// rate limits), so the loop just paces them.
+fn run_service(
+    args: &Args,
+    claude_dir: &Path,
+    email: &str,
+    poster: &Poster,
+    st: &mut State,
+    state_path: &Path,
+) -> anyhow::Result<()> {
+    let interval = std::time::Duration::from_secs(args.capture_interval.max(30));
+    println!(
+        "CCGuard agent: service mode — capture every {}s, triage once daily (idle-gated). Ctrl-C to stop.",
+        interval.as_secs()
+    );
+    let mut repos = repo::RepoCache::new();
+    let mut sigs = signals::SignalCache::new(&args.corp_env);
+    loop {
+        // Capture pass (cheap, every tick). A failure here must not kill the loop.
+        if let Err(e) = run_capture_once(
+            claude_dir, email, poster, st, state_path, &mut repos, &mut sigs,
+        ) {
+            eprintln!("CCGuard agent: capture pass error (will retry next tick): {e}");
+        }
+
+        // Daily triage pass: once per calendar day, only when not already done today.
+        // run_triage itself enforces the idle-gate, weekly budget, and backoff, and
+        // returns early (without doing work) when the dev is active — so on an active
+        // day we keep trying each tick until an idle window opens, then mark the date.
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        if !st.triage_ran_today(&today) {
+            let idle_ok = args.force
+                || seconds_since_active(claude_dir)
+                    .map(|s| s >= IDLE_GATE_SECS)
+                    .unwrap_or(true);
+            if idle_ok {
+                if let Err(e) = run_triage(args, claude_dir, email, poster, st, state_path) {
+                    eprintln!("CCGuard agent: triage pass error: {e}");
+                } else {
+                    // Mark the day done only after a real (idle) attempt ran.
+                    st.mark_triage_date(&today);
+                    let _ = st.save(state_path);
+                }
+            }
+        }
+
+        std::thread::sleep(interval);
+    }
 }
 
 #[cfg(test)]

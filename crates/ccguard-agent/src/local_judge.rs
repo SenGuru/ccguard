@@ -98,7 +98,10 @@ pub fn classify(prompt: &str, model: &str) -> Result<TriageVerdict> {
                 if start.elapsed() > JUDGE_TIMEOUT {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(anyhow!("claude timed out after {}s", JUDGE_TIMEOUT.as_secs()));
+                    return Err(anyhow!(
+                        "claude timed out after {}s",
+                        JUDGE_TIMEOUT.as_secs()
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }

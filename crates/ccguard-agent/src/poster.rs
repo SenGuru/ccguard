@@ -104,7 +104,10 @@ impl Poster {
             .query(&[("seat", seat), ("limit", &limit.to_string())])
             .send()?;
         if !(200..300).contains(&resp.status().as_u16()) {
-            return Err(anyhow!("triage pending failed: HTTP {}", resp.status().as_u16()));
+            return Err(anyhow!(
+                "triage pending failed: HTTP {}",
+                resp.status().as_u16()
+            ));
         }
         Ok(resp.json()?)
     }

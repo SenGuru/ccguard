@@ -21,6 +21,11 @@ pub struct State {
     /// Unix-epoch seconds until which the sweep is backing off (0 = none).
     #[serde(default)]
     pub triage_backoff_until: i64,
+    /// `--service` mode: the calendar date (YYYY-MM-DD) the daily triage pass last
+    /// ran. Lets the loop run triage once per day with catch-up if a day was missed
+    /// (laptop asleep/off). Empty = never.
+    #[serde(default)]
+    pub triage_last_date: String,
 }
 
 impl State {
@@ -79,6 +84,17 @@ impl State {
     pub fn set_backoff(&mut self, until_epoch: i64) {
         self.triage_backoff_until = until_epoch;
     }
+
+    /// `--service` mode: has the daily triage pass already run on `date`
+    /// (YYYY-MM-DD)? False also when a prior day was missed (→ catch-up runs).
+    pub fn triage_ran_today(&self, date: &str) -> bool {
+        self.triage_last_date == date
+    }
+
+    /// Record that the daily triage pass ran on `date`.
+    pub fn mark_triage_date(&mut self, date: &str) {
+        self.triage_last_date = date.to_string();
+    }
 }
 
 #[cfg(test)]
@@ -101,8 +117,7 @@ mod tests {
 
     #[test]
     fn capture_watermark_roundtrip_default_negative_one() {
-        let tmp =
-            std::env::temp_dir().join(format!("ccg_state_wm_{}.json", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("ccg_state_wm_{}.json", std::process::id()));
         let mut s = State::default();
         // Default for an unseen file is -1 (nothing confirmed-sent yet).
         assert_eq!(s.capture_watermark("f"), -1);
@@ -113,6 +128,17 @@ mod tests {
         std::fs::remove_file(&tmp).ok();
         assert_eq!(loaded.capture_watermark("f"), 7);
         assert_eq!(loaded.capture_watermark("other"), -1);
+    }
+
+    #[test]
+    fn daily_triage_date_tracking_and_catchup() {
+        let mut s = State::default();
+        // Never run → not today, so the daily pass should run (incl. catch-up).
+        assert!(!s.triage_ran_today("2026-06-13"));
+        s.mark_triage_date("2026-06-13");
+        assert!(s.triage_ran_today("2026-06-13"));
+        // A new day → false again (today's pass is due).
+        assert!(!s.triage_ran_today("2026-06-14"));
     }
 
     #[test]

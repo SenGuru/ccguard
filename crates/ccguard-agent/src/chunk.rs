@@ -99,7 +99,10 @@ mod tests {
         // 5 events of 100 bytes each, budget 250 → multiple chunks.
         let s = session((0..5).map(|i| ev(i, 100)).collect());
         let chunks = chunk_session(&s, 250);
-        assert!(chunks.len() > 1, "tiny budget should produce multiple chunks");
+        assert!(
+            chunks.len() > 1,
+            "tiny budget should produce multiple chunks"
+        );
 
         // Concatenated events equal the original, in order, no drops/dups.
         let seqs: Vec<i64> = chunks

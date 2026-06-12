@@ -92,7 +92,11 @@ mod tests {
         let mut cache = RepoCache::new();
         assert!(interaction_to_event(&base, "x", &mut cache).is_none()); // no cwd
 
-        let bad_ts = Interaction { cwd: Some("/tmp".into()), ts: "not-a-date".into(), ..base };
+        let bad_ts = Interaction {
+            cwd: Some("/tmp".into()),
+            ts: "not-a-date".into(),
+            ..base
+        };
         assert!(interaction_to_event(&bad_ts, "x", &mut cache).is_none());
     }
 }

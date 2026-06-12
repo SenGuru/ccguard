@@ -251,8 +251,7 @@ pub fn parse_session(content: &str, fallback_cwd: Option<&str>) -> CapturedSessi
                             };
                             match block_type {
                                 "text" => {
-                                    let text =
-                                        block["text"].as_str().unwrap_or("").to_string();
+                                    let text = block["text"].as_str().unwrap_or("").to_string();
                                     if !text.is_empty() {
                                         events.push(CapturedEvent {
                                             seq,
@@ -429,13 +428,25 @@ mod tests {
         assert_eq!(sess.cwd.as_deref(), Some("C:\\work\\repo"));
 
         // Expected events: UserPrompt, Thinking, ToolCall(Bash), ToolResult, AssistantText
-        assert_eq!(sess.events.len(), 5, "expected 5 events, got {:?}", sess.events.iter().map(|e| e.kind).collect::<Vec<_>>());
+        assert_eq!(
+            sess.events.len(),
+            5,
+            "expected 5 events, got {:?}",
+            sess.events.iter().map(|e| e.kind).collect::<Vec<_>>()
+        );
 
         assert_eq!(sess.events[0].kind, EventKind::UserPrompt);
-        assert_eq!(sess.events[0].content.as_deref(), Some("Please run git status"));
+        assert_eq!(
+            sess.events[0].content.as_deref(),
+            Some("Please run git status")
+        );
 
         assert_eq!(sess.events[1].kind, EventKind::Thinking);
-        assert!(sess.events[1].content.as_deref().unwrap().contains("git status"));
+        assert!(sess.events[1]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("git status"));
         // tokens attached to first event of assistant turn
         assert_eq!(sess.events[1].tokens_in, 500);
         assert_eq!(sess.events[1].tokens_out, 10);
@@ -453,7 +464,10 @@ mod tests {
         assert_eq!(sess.events[3].target.as_deref(), Some("toolu_abc"));
 
         assert_eq!(sess.events[4].kind, EventKind::AssistantText);
-        assert_eq!(sess.events[4].content.as_deref(), Some("The repo is clean."));
+        assert_eq!(
+            sess.events[4].content.as_deref(),
+            Some("The repo is clean.")
+        );
         assert_eq!(sess.events[4].tokens_in, 600);
         assert_eq!(sess.events[4].tokens_out, 30);
     }
@@ -482,7 +496,8 @@ mod tests {
 
     #[test]
     fn skips_garbage_and_system_lines() {
-        let transcript = "not json\n{}\n{\"type\":\"system\"}\n{\"type\":\"file-history-snapshot\"}\n";
+        let transcript =
+            "not json\n{}\n{\"type\":\"system\"}\n{\"type\":\"file-history-snapshot\"}\n";
         let sess = parse_session(transcript, None);
         assert_eq!(sess.events.len(), 0);
         assert_eq!(sess.session_id, "");

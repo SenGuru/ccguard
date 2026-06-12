@@ -587,20 +587,31 @@ pub async fn apply_verdict(
     };
     let gaming_flags = gaming::flags(verdict.label.as_str(), prov_for_gaming);
     let pv = policy_version(pool, tenant_id).await?;
+    // The session's current event_count — the re-judge-on-growth baseline. Future
+    // growth past this is what re-enqueues the session for another look.
+    let ec: i32 = sqlx::query_scalar::<_, i32>(
+        "select event_count from captured_sessions where tenant_id=$1 and session_id=$2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(0);
 
     sqlx::query(
         "insert into session_triage \
          (tenant_id, session_id, label, confidence, reason, model, resolved_by, structural, \
           enforceable, mixed, matched_clause, policy_version, gaming_flags, input_digest, \
-          off_assignment, next_retry_at, updated_at) \
-         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8,$9,$10,$11,$12,$13,$14, null, now()) \
+          off_assignment, judged_event_count, next_retry_at, updated_at) \
+         values ($1,$2,$3,$4,$5,$6,'llm',$7,$8,$9,$10,$11,$12,$13,$14,$15, null, now()) \
          on conflict (tenant_id, session_id) do update set \
            label = excluded.label, confidence = excluded.confidence, reason = excluded.reason, \
            model = excluded.model, resolved_by = 'llm', structural = excluded.structural, \
            enforceable = excluded.enforceable, mixed = excluded.mixed, \
            matched_clause = excluded.matched_clause, policy_version = excluded.policy_version, \
            gaming_flags = excluded.gaming_flags, input_digest = excluded.input_digest, \
-           off_assignment = excluded.off_assignment, next_retry_at = null, updated_at = now()",
+           off_assignment = excluded.off_assignment, judged_event_count = excluded.judged_event_count, \
+           next_retry_at = null, updated_at = now()",
     )
     .bind(tenant_id)
     .bind(session_id)
@@ -616,6 +627,7 @@ pub async fn apply_verdict(
     .bind(&gaming_flags)
     .bind(input_digest)
     .bind(verdict.off_assignment)
+    .bind(ec)
     .execute(pool)
     .await?;
 
@@ -705,8 +717,12 @@ pub async fn run_unclassified(
         "select s.session_id from captured_sessions s \
          left join session_triage t \
            on t.tenant_id = s.tenant_id and t.session_id = s.session_id \
-         where s.tenant_id = $1 and s.classification = 'pending' \
-           and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now())) \
+         where s.tenant_id = $1 and ( \
+             (s.classification = 'pending' \
+               and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now()))) \
+             or (t.next_retry_at is not null and t.next_retry_at <= now() \
+                 and not coalesce(t.human_reviewed, false)) \
+         ) \
          order by s.last_ts desc nulls last limit $2",
     )
     .bind(tenant_id)
@@ -819,6 +835,16 @@ async fn assemble_triageable(
             .bind(session_id)
             .execute(pool)
             .await?;
+            // Clear any pending re-judge so a non-triageable grown session isn't
+            // re-selected every sweep (the retry arm keys on next_retry_at).
+            sqlx::query(
+                "update session_triage set next_retry_at=null \
+                 where tenant_id=$1 and session_id=$2",
+            )
+            .bind(tenant_id)
+            .bind(session_id)
+            .execute(pool)
+            .await?;
             Ok(None)
         }
     }
@@ -849,9 +875,12 @@ pub async fn pending_endpoint(
     let rows = sqlx::query(
         "select s.session_id from captured_sessions s \
          left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
-         where s.tenant_id=$1 and s.classification='pending' \
-           and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now())) \
-           and ($2::text is null or s.user_email=$2) \
+         where s.tenant_id=$1 and ($2::text is null or s.user_email=$2) and ( \
+             (s.classification='pending' \
+               and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now()))) \
+             or (t.next_retry_at is not null and t.next_retry_at <= now() \
+                 and not coalesce(t.human_reviewed, false)) \
+         ) \
          order by s.last_ts desc nulls last limit $3",
     )
     .bind(&tenant)
