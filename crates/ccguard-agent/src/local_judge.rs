@@ -6,11 +6,11 @@
 //! the existing OAuth session, costs nothing extra, and the session content never
 //! leaves the machine's already-authorized Claude Code channel.
 //!
-//! Invocation (confirmed against current Claude Code headless docs):
-//!   claude --bare -p "<prompt>" --model <m> --output-format json \
-//!          --permission-mode dontAsk --max-turns 1
-//! `--bare` skips project context/hooks/skills; `--permission-mode dontAsk` +
-//! `--max-turns 1` make it a pure, non-interactive, no-tools, can't-hang text call.
+//! Invocation (live-tested 2026-06-12 on a logged-in Max seat):
+//!   claude -p "<instruction>" --model <m> --output-format json --max-turns 1
+//! NOTE: `--bare` must NOT be used — it skips loading the stored OAuth login and
+//! every call fails "Not logged in" even with valid credentials on disk.
+//! `--max-turns 1` makes it a non-interactive, can't-hang text call.
 //! We strip `ANTHROPIC_API_KEY` from the child env so it uses the logged-in session
 //! rather than a key (a set key would otherwise take precedence).
 
@@ -39,12 +39,13 @@ confidence a number from 0 to 1; and reason, one short sentence. Output only tha
 /// The prompt is delivered on STDIN (safe for arbitrary content); only fixed,
 /// special-char-free flags hit the command line.
 pub fn classify(prompt: &str, model: &str) -> Result<TriageVerdict> {
-    // `--bare` (no hooks/MCP/plugins/project context) + `--max-turns 1` make this a
-    // pure, non-interactive, no-tools text call; `--output-format json` wraps the
-    // answer. (No `--permission-mode`: with --bare and a single text turn there are
-    // no tools to gate, and the valid modes don't include a "deny-all".)
+    // NO `--bare`: live-tested 2026-06-12 — `--bare` skips loading the stored OAuth
+    // login, so every call failed "Not logged in" even on a valid Max session;
+    // without it the logged-in session answers. `--max-turns 1` keeps this a pure,
+    // non-interactive, can't-hang text call; `--output-format json` wraps the
+    // answer. (No `--permission-mode`: a single text turn has no tools to gate, and
+    // the valid modes don't include a "deny-all".)
     let args = [
-        "--bare",
         "-p",
         INSTRUCTION,
         "--model",
