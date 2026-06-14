@@ -360,7 +360,8 @@ def cmd_deploy(*args: str) -> int:
 _SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=ccguard server ({env})
-After=network.target postgresql.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -406,7 +407,13 @@ server {{
 
 
 def _db_steps(cfg: DeployConfig) -> list[str]:
-    """Idempotent CREATE ROLE + CREATE DATABASE from the DATABASE_URL in the env file."""
+    """Idempotent CREATE DATABASE from the DATABASE_URL in the env file.
+
+    Connects to whatever host the URL names. The QA box uses the shared remote
+    Postgres (same server as attend), so this shells `psql` over the network as
+    the URL's user; for a localhost URL it drops to the local postgres superuser
+    instead. A separate role is only created when the user isn't `postgres`.
+    """
     assert cfg.env_file is not None
     url = ""
     for line in cfg.env_file.read_text(encoding="utf-8").splitlines():
@@ -417,18 +424,33 @@ def _db_steps(cfg: DeployConfig) -> list[str]:
         print("warning: no DATABASE_URL in env file — skipping db creation")
         return []
     parts = urlsplit(url)
-    user = unquote(parts.username or "ccguard")
+    user = unquote(parts.username or "postgres")
     password = unquote(parts.password or "")
+    host = parts.hostname or "localhost"
+    port = parts.port or 5432
     dbname = parts.path.lstrip("/") or "ccguard"
-    # runuser drops to the postgres superuser; single-quote the password literal.
-    pg = "runuser -u postgres -- psql"
-    pw_lit = password.replace("'", "''")
+
+    if host in ("localhost", "127.0.0.1", "::1"):
+        # Local box Postgres: act as the OS postgres superuser.
+        pg = "runuser -u postgres -- psql"
+        pw_lit = password.replace("'", "''")
+        steps = ["systemctl enable --now postgresql"]
+        if user != "postgres":
+            steps.append(
+                f"{pg} -tAc \"SELECT 1 FROM pg_roles WHERE rolname='{user}'\" | grep -q 1 || "
+                f"{pg} -c \"CREATE ROLE \\\"{user}\\\" LOGIN PASSWORD '{pw_lit}'\"")
+        steps.append(
+            f"{pg} -tAc \"SELECT 1 FROM pg_database WHERE datname='{dbname}'\" | grep -q 1 || "
+            f"{pg} -c \"CREATE DATABASE \\\"{dbname}\\\" OWNER \\\"{user}\\\"\"")
+        return steps
+
+    # Remote Postgres: connect over the network as the URL's user (must be able to
+    # create databases — the shared box connects as the postgres superuser). The
+    # hyphenated db name needs SQL double-quoting; psql -c carries it single-quoted.
+    pg = f"PGPASSWORD='{password}' psql -h {host} -p {port} -U {user} -d postgres"
     return [
-        "systemctl enable --now postgresql",
-        (f"{pg} -tAc \"SELECT 1 FROM pg_roles WHERE rolname='{user}'\" | grep -q 1 || "
-         f"{pg} -c \"CREATE ROLE \\\"{user}\\\" LOGIN PASSWORD '{pw_lit}'\""),
-        (f"{pg} -tAc \"SELECT 1 FROM pg_database WHERE datname='{dbname}'\" | grep -q 1 || "
-         f"{pg} -c \"CREATE DATABASE \\\"{dbname}\\\" OWNER \\\"{user}\\\"\""),
+        (f"( {pg} -tAc \"SELECT 1 FROM pg_database WHERE datname='{dbname}'\" | grep -q 1 || "
+         f"{pg} -c 'CREATE DATABASE \"{dbname}\"' )"),
     ]
 
 
@@ -485,7 +507,9 @@ def cmd_provision(*args: str) -> int:
         _sftp_put(client, unit_path, remote_unit)
         _sftp_put(client, nginx_path, remote_nginx)
 
-        packages = "nginx postgresql postgresql-client openssl"
+        # postgresql-client gives us psql to create the DB on the remote server;
+        # no local postgresql server is needed (the QA DB lives on a shared box).
+        packages = "nginx postgresql-client openssl"
         if cfg.lets_encrypt:
             packages += " certbot python3-certbot-nginx"
 
