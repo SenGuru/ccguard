@@ -185,6 +185,9 @@ mod tests {
         CapturedSession {
             session_id: "s".into(),
             user_email: "d@acme.com".into(),
+            device_id: None,
+            hostname: None,
+            plan: None,
             repo,
             title: None,
             cwd: None,
