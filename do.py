@@ -72,6 +72,7 @@ class DeployConfig:
     ssh_user: str
     ssh_key: Path | None
     env_file: Path | None        # pushed to <remote_path>/<env>.env (systemd EnvironmentFile)
+    config_file: Path | None     # pushed to <remote_path>/configuration/ccg.json
     remote_path: str
     service_name: str
     subdomain: str
@@ -96,6 +97,10 @@ class DeployConfig:
     @property
     def remote_env(self) -> str:
         return f"{self.remote_path}/{self.env_name}.env"
+
+    @property
+    def remote_config(self) -> str:
+        return f"{self.remote_path}/configuration/ccg.json"
 
     @property
     def ssl_certfile(self) -> str:
@@ -133,6 +138,7 @@ def _load_deploy_config(env_name: str) -> DeployConfig:
         ssh_user=deploy.get("sshUser", "root"),
         ssh_key=target.ssh_key,
         env_file=_deploy_path(deploy.get("envFile", f"{env_name}.env")),
+        config_file=_deploy_path(deploy.get("configFile", f"{env_name}-ccg.json")),
         remote_path=deploy.get("remotePath", "/opt/ccguard"),
         service_name=deploy.get("serviceName", "ccguard"),
         subdomain=deploy.get("subdomain", ""),
@@ -318,6 +324,9 @@ def cmd_deploy(*args: str) -> int:
         print(f"env file {cfg.env_file} not found — copy deploy/{env_name}.env.example "
               f"to deploy/{env_name}.env and fill it in")
         return 2
+    if cfg.config_file is None or not cfg.config_file.is_file():
+        print(f"config file {cfg.config_file} not found — create deploy/{env_name}-ccg.json")
+        return 2
 
     if not skip_build:
         rc = cmd_build()
@@ -330,11 +339,13 @@ def cmd_deploy(*args: str) -> int:
     resolved_env = _resolve_env_file(cfg)
     remote_tmp_bin = f"/tmp/{cfg.service_name}-server"
     remote_tmp_env = f"/tmp/{cfg.service_name}-{env_name}.env"
+    remote_tmp_cfg = f"/tmp/{cfg.service_name}-ccg.json"
 
     client = _connect_ssh(cfg)
     try:
         _sftp_put(client, LINUX_BINARY, remote_tmp_bin)
         _sftp_put(client, resolved_env, remote_tmp_env)
+        _sftp_put(client, cfg.config_file, remote_tmp_cfg)
         steps = [
             f"systemctl stop {cfg.service_name} || true",
             f"mkdir -p {cfg.remote_path}/bin",
@@ -342,6 +353,9 @@ def cmd_deploy(*args: str) -> int:
             f"chmod +x {cfg.remote_binary}",
             f"mv {remote_tmp_env} {cfg.remote_env}",
             f"chmod 600 {cfg.remote_env}",
+            f"mkdir -p {cfg.remote_path}/configuration {cfg.remote_path}/data/logs",
+            f"mv {remote_tmp_cfg} {cfg.remote_path}/configuration/ccg.json",
+            f"chmod 600 {cfg.remote_path}/configuration/ccg.json",
             f"systemctl start {cfg.service_name}",
             "sleep 2",
             f"systemctl status {cfg.service_name} --no-pager -l | head -n 8",
@@ -407,21 +421,20 @@ server {{
 
 
 def _db_steps(cfg: DeployConfig) -> list[str]:
-    """Idempotent CREATE DATABASE from the DATABASE_URL in the env file.
+    """Idempotent CREATE DATABASE from the database url in deploy/<env>-ccg.json.
 
     Connects to whatever host the URL names. The QA box uses the shared remote
     Postgres (same server as attend), so this shells `psql` over the network as
     the URL's user; for a localhost URL it drops to the local postgres superuser
     instead. A separate role is only created when the user isn't `postgres`.
     """
-    assert cfg.env_file is not None
-    url = ""
-    for line in cfg.env_file.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("DATABASE_URL="):
-            url = line.split("=", 1)[1].strip()
-            break
+    if cfg.config_file is None or not cfg.config_file.is_file():
+        print("warning: no ccg.json config — skipping db creation")
+        return []
+    raw = json.loads(cfg.config_file.read_text(encoding="utf-8"))
+    url = (raw.get("database", {}) or {}).get("url", "")
     if not url:
-        print("warning: no DATABASE_URL in env file — skipping db creation")
+        print("warning: no database.url in ccg.json — skipping db creation")
         return []
     parts = urlsplit(url)
     user = unquote(parts.username or "postgres")
@@ -521,7 +534,8 @@ def cmd_provision(*args: str) -> int:
             "export DEBIAN_FRONTEND=noninteractive",
             "apt-get update -qq",
             f"apt-get install -y -qq {packages}",
-            f"mkdir -p {cfg.remote_path}/bin {cfg.remote_path}/certs",
+            f"mkdir -p {cfg.remote_path}/bin {cfg.remote_path}/certs "
+            f"{cfg.remote_path}/configuration {cfg.remote_path}/data/logs",
         ]
         steps += _db_steps(cfg)
         steps += [

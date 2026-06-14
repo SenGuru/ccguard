@@ -1,0 +1,11 @@
+{
+  "database": { "url": "postgres://ccguard:ccguard@localhost:5432/ccguard" },
+  "logging": {
+    "level": "INFO",
+    "path": "|ConfigPath|../data/logs/ccguard.log",
+    "max_bytes": 10485760,
+    "backup_count": 7,
+    "to_stdout": true,
+    "quiet_targets": ["sqlx=warn"]
+  }
+}

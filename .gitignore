@@ -15,5 +15,11 @@ deploy/dist/
 deploy/*.env
 !deploy/*.env.example
 
+# Runtime data (sqlite/logs written under a data/ sibling of configuration/).
+/data/
+
+# QA config carries the real Postgres URL/password — pushed at deploy time.
+deploy/qa-ccg.json
+
 # Market / GTM / MRR research — keep local only, never publish
 RESEARCH-FINDINGS.md
