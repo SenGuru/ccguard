@@ -57,6 +57,9 @@ fn default_true() -> bool {
     true
 }
 
+// Hand-written (not derived) so `to_stdout` defaults to *true* even when the
+// whole `logging` block is absent — `#[derive(Default)]` would make it false.
+// Keep this `true` in sync with `default_true` (used when only the field is omitted).
 impl Default for LoggingConfig {
     fn default() -> Self {
         LoggingConfig {

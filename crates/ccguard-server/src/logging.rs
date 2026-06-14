@@ -45,8 +45,11 @@ fn build_filter(cfg: &LoggingConfig) -> EnvFilter {
     let level = cfg.level.clone().unwrap_or_else(|| "INFO".into());
     let mut filter = EnvFilter::new(level);
     for target in &cfg.quiet_targets {
-        if let Ok(directive) = target.parse() {
-            filter = filter.add_directive(directive);
+        match target.parse() {
+            Ok(directive) => filter = filter.add_directive(directive),
+            // Logging isn't initialized yet, so warn to stderr rather than drop a
+            // typo'd directive silently (which would leave that target un-quieted).
+            Err(e) => eprintln!("warning: ignoring invalid quiet_targets entry {target:?}: {e}"),
         }
     }
     filter
