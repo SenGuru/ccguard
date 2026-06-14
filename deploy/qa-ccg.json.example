@@ -1,0 +1,14 @@
+{
+  "_comment": "QA config — copy to deploy/qa-ccg.json and fill in the real DB URL. The real file is gitignored and pushed to <remotePath>/configuration/ccg.json on every deploy. The password in the URL must be percent-encoded. provision reads database.url from here to create the database.",
+  "database": {
+    "url": "postgres://USER:URLENCODED_PASSWORD@HOST:5432/ccguard-qa-1?sslmode=prefer"
+  },
+  "logging": {
+    "level": "INFO",
+    "path": "|ConfigPath|../data/logs/ccguard.log",
+    "max_bytes": 10485760,
+    "backup_count": 7,
+    "to_stdout": true,
+    "quiet_targets": ["sqlx=warn"]
+  }
+}
