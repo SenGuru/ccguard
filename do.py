@@ -8,7 +8,7 @@ Dev:
   c            cargo check --workspace
 
 Build & deploy (QA = the shared landessware.com box):
-  build [env]      cross-compile the Linux server binary in Docker (musl static)
+  build [env]      cross-compile the Ubuntu server binary (cargo-zigbuild, no Docker)
   deploy [env]     build -> upload binary + env file -> restart the systemd service
                    (add --skip-build to reuse the last built binary)
   provision [env]  one-time server bootstrap: Postgres role+db, systemd unit,
@@ -24,6 +24,7 @@ no separate migrate step — restarting the service after a deploy migrates the 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -38,10 +39,13 @@ ROOT = Path(__file__).resolve().parent
 DEPLOY_DIR = ROOT / "deploy"
 DIST_DIR = DEPLOY_DIR / "dist"
 
-# The server crate's release binary, cross-compiled for Linux into its own target
-# dir so it never collides with the Windows host's target/release artifacts.
-LINUX_TARGET_DIR = ROOT / "target" / "linux-musl"
-LINUX_BINARY = LINUX_TARGET_DIR / "release" / "ccguard-server"
+# Cross-compile from Windows to Ubuntu via cargo-zigbuild (Zig as the cross
+# linker/libc — no Docker). The glibc version is pinned to the target distro:
+# Ubuntu 24.04 ships glibc 2.39. cargo zigbuild puts the artifact under the base
+# triple's target dir (the `.2.39` glibc suffix only affects linking).
+LINUX_TARGET = "x86_64-unknown-linux-gnu"
+GLIBC_VERSION = "2.39"  # Ubuntu 24.04 LTS
+LINUX_BINARY = ROOT / "target" / LINUX_TARGET / "release" / "ccguard-server"
 
 
 # --------------------------------------------------------------------------- #
@@ -175,47 +179,48 @@ def cmd_check(*args: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Build — cross-compile the Linux server binary in Docker.
-# rust:alpine is musl-native, so a plain release build is a static x86_64-musl
-# binary that runs on the QA box with zero shared-lib / glibc-version surprises.
-# A named volume caches the crate registry across builds.
+# Build — cross-compile the Ubuntu server binary from Windows, no Docker.
+# cargo-zigbuild uses Zig as the cross linker + libc; the glibc version is pinned
+# (x86_64-unknown-linux-gnu.2.39) so the binary matches Ubuntu 24.04's glibc.
+# One-time setup:
+#   rustup target add x86_64-unknown-linux-gnu
+#   python -m pip install ziglang
+#   cargo install cargo-zigbuild
 # --------------------------------------------------------------------------- #
-def cmd_build(*args: str) -> int:
-    """Cross-compile ccguard-server for Linux (musl static) via Docker."""
-    if not _docker_available():
-        print("Docker is required to cross-compile the Linux binary.\n"
-              "   Install Docker Desktop and ensure `docker` is on PATH.")
-        return 2
-
-    work = str(ROOT).replace("\\", "/")
-    build = (
-        "apk add --no-cache build-base >/dev/null && "
-        "cargo build --release --bin ccguard-server --target-dir target/linux-musl"
-    )
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{work}:/work", "-w", "/work",
-        "-v", "ccguard-cargo-registry:/usr/local/cargo/registry",
-        "rust:alpine", "sh", "-c", build,
-    ]
-    rc = _run(cmd)
-    if rc == 0:
-        if not LINUX_BINARY.is_file():
-            print(f"build reported success but {LINUX_BINARY} is missing")
-            return 1
-        size_mb = LINUX_BINARY.stat().st_size / (1024 * 1024)
-        print(f"built {LINUX_BINARY} ({size_mb:.1f} MB, linux x86_64-musl)")
-    return rc
-
-
-def _docker_available() -> bool:
+def _zig_env() -> dict[str, str]:
+    """Env with the ziglang-bundled `zig` on PATH (cargo-zigbuild needs it)."""
+    env = dict(os.environ)
     try:
-        return subprocess.call(
-            ["docker", "version"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        ) == 0
-    except OSError:
-        return False
+        import ziglang  # the pip package ships zig inside its module dir
+        zig_dir = os.path.dirname(ziglang.__file__)
+        env["PATH"] = zig_dir + os.pathsep + env.get("PATH", "")
+    except ImportError:
+        pass  # fall back to a `zig` already on PATH; build errors if absent
+    return env
+
+
+def cmd_build(*args: str) -> int:
+    """Cross-compile ccguard-server for Ubuntu 24.04 (x86_64 glibc) via cargo-zigbuild."""
+    target = f"{LINUX_TARGET}.{GLIBC_VERSION}"
+    cmd = ["cargo", "zigbuild", "--release", "-p", "ccguard-server", "--target", target]
+    print(f"$ {' '.join(cmd)}")
+    try:
+        rc = subprocess.call(cmd, cwd=str(ROOT), env=_zig_env())
+    except FileNotFoundError:
+        print("cargo not found on PATH.")
+        return 2
+    if rc != 0:
+        print("\nbuild failed. Ensure the cross toolchain is installed:\n"
+              "   rustup target add x86_64-unknown-linux-gnu\n"
+              "   python -m pip install ziglang\n"
+              "   cargo install cargo-zigbuild")
+        return rc
+    if not LINUX_BINARY.is_file():
+        print(f"build reported success but {LINUX_BINARY} is missing")
+        return 1
+    size_mb = LINUX_BINARY.stat().st_size / (1024 * 1024)
+    print(f"built {LINUX_BINARY} ({size_mb:.1f} MB, {LINUX_TARGET} glibc {GLIBC_VERSION})")
+    return 0
 
 
 # --------------------------------------------------------------------------- #
