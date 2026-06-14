@@ -93,15 +93,15 @@ impl Poster {
         Ok(parsed)
     }
 
-    /// GET unclassified sessions to triage for `seat` (the agent's user), each with
-    /// a ready-to-run prompt. The agent answers each via the local Claude Code CLI.
-    pub fn get_triage_pending(&self, seat: &str, limit: u32) -> Result<Vec<PendingItem>> {
+    /// GET unclassified sessions to triage for this `device` (the seat = the machine),
+    /// each with a ready-to-run prompt. The agent answers each via the local Claude Code CLI.
+    pub fn get_triage_pending(&self, device: &str, limit: u32) -> Result<Vec<PendingItem>> {
         let url = format!("{}/v1/triage/pending", self.base_url);
         let resp = self
             .client
             .get(&url)
             .bearer_auth(&self.token)
-            .query(&[("seat", seat), ("limit", &limit.to_string())])
+            .query(&[("device", device), ("limit", &limit.to_string())])
             .send()?;
         if !(200..300).contains(&resp.status().as_u16()) {
             return Err(anyhow!(

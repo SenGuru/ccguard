@@ -334,6 +334,9 @@ pub fn parse_session(content: &str, fallback_cwd: Option<&str>) -> CapturedSessi
         session_id,
         // Caller fills these after the call:
         user_email: String::new(),
+        device_id: None,
+        hostname: None,
+        plan: None,
         repo: Repo {
             host: None,
             org: None,

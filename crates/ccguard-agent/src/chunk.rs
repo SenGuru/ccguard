@@ -45,6 +45,9 @@ fn meta_with(s: &CapturedSession, events: Vec<CapturedEvent>) -> CapturedSession
     CapturedSession {
         session_id: s.session_id.clone(),
         user_email: s.user_email.clone(),
+        device_id: s.device_id.clone(),
+        hostname: s.hostname.clone(),
+        plan: s.plan.clone(),
         repo: s.repo.clone(),
         title: s.title.clone(),
         cwd: s.cwd.clone(),

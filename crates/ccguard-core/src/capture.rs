@@ -60,7 +60,19 @@ pub struct CapturedEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapturedSession {
     pub session_id: String,
+    /// The Claude Code subscription account email — informational only; NOT the seat
+    /// identity (a subscription can be shared across people/machines).
     pub user_email: String,
+    /// Stable per-machine id (hash of hostname+os). The real seat identity: one
+    /// company machine = one person. Optional for older-agent back-compat.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// Human-readable machine name (COMPUTERNAME / HOSTNAME).
+    #[serde(default)]
+    pub hostname: Option<String>,
+    /// The subscription plan in use on this machine (e.g. "max", "pro"). Side info.
+    #[serde(default)]
+    pub plan: Option<String>,
     pub repo: Repo,
     #[serde(default)]
     pub title: Option<String>,

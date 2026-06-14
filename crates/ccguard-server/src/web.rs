@@ -98,7 +98,7 @@ pub fn nav() -> Markup {
             a.brand href="/dashboard" { (maud::PreEscaped(LOGO_SVG)) "Claresso" }
             div.navlinks {
                 a href="/dashboard" { "Dashboard" }
-                a href="/dashboard/people" { "People" }
+                a href="/dashboard/people" { "Machines" }
                 a href="/dashboard/search" { "Search" }
                 a href="/dashboard/findings" { "Findings" }
                 a href="/dashboard/fleet" { "Fleet" }
@@ -2732,20 +2732,26 @@ fn yesno(b: Option<bool>) -> &'static str {
     }
 }
 
-/// People roster: one row per seat (user_email) with their session split, role,
-/// assignment, and open-flag count. Each links to the per-person detail.
+/// People roster: one row per MACHINE (the real seat — a Claude Code subscription
+/// can be shared, so identity is the computer, not the login email). Shows the
+/// session split, open flags, and the subscription email(s) + plan as side info.
 pub async fn people(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
     let rows = sqlx::query(
-        "select cs.user_email as em, count(*) as sessions, \
+        "select coalesce(cs.hostname,'unidentified') as host, \
+           count(*) as sessions, \
            count(*) filter (where cs.classification='work') as work, \
            count(*) filter (where cs.classification='personal') as personal, \
            count(*) filter (where cs.classification not in ('work','personal')) as other, \
-           coalesce((select count(*) from indicators i \
-             where i.tenant_id=cs.tenant_id and i.user_email=cs.user_email and i.status='open'),0) as flags, \
-           (select job_role from employee_roles r where r.tenant_id=cs.tenant_id and r.user_email=cs.user_email) as role, \
-           (select assignment from employee_roles r where r.tenant_id=cs.tenant_id and r.user_email=cs.user_email) as assignment \
-         from captured_sessions cs where cs.tenant_id=$1 \
-         group by cs.user_email, cs.tenant_id order by sessions desc",
+           string_agg(distinct cs.user_email, ', ') as emails, \
+           max(cs.plan) as plan, \
+           coalesce(sum(fl.open_flags),0)::bigint as flags \
+         from captured_sessions cs \
+         left join ( \
+           select tenant_id, session_id, count(*) as open_flags \
+           from indicators where tenant_id=$1 and status='open' group by tenant_id, session_id \
+         ) fl on fl.tenant_id=cs.tenant_id and fl.session_id=cs.session_id \
+         where cs.tenant_id=$1 \
+         group by coalesce(cs.hostname,'unidentified'), cs.tenant_id order by sessions desc",
     )
     .bind(&user.tenant_id)
     .fetch_all(&pool)
@@ -2753,27 +2759,27 @@ pub async fn people(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
     .unwrap_or_default();
 
     page(
-        "People",
+        "Machines",
         html! {
             (nav())
-            h1 { "People — usage by person" }
-            p.muted style="margin-bottom:2px" { "One seat per row. Open a person to see every session, device, finding and flag in one place." }
+            h1 { "Machines — usage by computer" }
+            p.muted style="margin-bottom:2px" { "One company machine per row (the real seat). Open a machine to see every session, device, finding and flag in one place. The subscription email + plan is shown as side info since a subscription can be shared." }
             table {
-                thead { tr { th{"Person"} th{"Role"} th{"Assigned to"} th{"Sessions"} th{"Work"} th{"Personal"} th{"Other"} th{"Open flags"} } }
+                thead { tr { th{"Machine"} th{"Subscription"} th{"Plan"} th{"Sessions"} th{"Work"} th{"Personal"} th{"Other"} th{"Open flags"} } }
                 tbody {
                     @for r in &rows {
-                        @let em: String = r.get("em");
-                        @let role: Option<String> = r.get("role");
-                        @let asg: Option<String> = r.get("assignment");
+                        @let host: String = r.get("host");
+                        @let emails: Option<String> = r.get("emails");
+                        @let plan: Option<String> = r.get("plan");
                         @let s: i64 = r.get("sessions");
                         @let w: i64 = r.get("work");
                         @let p: i64 = r.get("personal");
                         @let o: i64 = r.get("other");
                         @let f: i64 = r.get("flags");
                         tr {
-                            td { a href={"/dashboard/people/" (em)} { (em) } }
-                            td { (role.unwrap_or_else(|| "—".into())) }
-                            td.muted { (asg.unwrap_or_else(|| "—".into())) }
+                            td { a href={"/dashboard/people/" (host)} { (host) } }
+                            td.muted { (emails.unwrap_or_else(|| "—".into())) }
+                            td { @if let Some(pl) = &plan { span.badge.work { (pl) } } @else { "—" } }
                             td { (s) }
                             td { @if w>0 { span.badge.work { (w) } } @else { "0" } }
                             td { @if p>0 { span.badge.personal { (p) } } @else { "0" } }
@@ -2787,16 +2793,29 @@ pub async fn people(user: WebUser, State(pool): State<PgPool>) -> Html<String> {
     )
 }
 
-/// Per-person detail: everything about one seat in one place — role + assignment,
-/// enrolled device(s) + compliance, session/token/on-task KPIs, recent sessions,
-/// open flags. Keyed by user_email.
+/// Per-machine detail: everything about one computer in one place — subscription
+/// email(s) + plan + role/assignment (side info), enrolled device + compliance,
+/// session/token/on-task KPIs, recent sessions, open flags. Keyed by hostname.
 pub async fn person(
     user: WebUser,
     State(pool): State<PgPool>,
-    Path(email): Path<String>,
+    Path(host): Path<String>,
 ) -> Html<String> {
+    // Subscription email(s) + plan seen on this machine (side info).
+    let sub = sqlx::query(
+        "select string_agg(distinct user_email, ', ') as emails, max(plan) as plan \
+         from captured_sessions where tenant_id=$1 and coalesce(hostname,'unidentified')=$2")
+        .bind(&user.tenant_id).bind(&host).fetch_optional(&pool).await.ok().flatten();
+    let emails = sub.as_ref().and_then(|r| r.get::<Option<String>, _>("emails")).unwrap_or_default();
+    let plan = sub.as_ref().and_then(|r| r.get::<Option<String>, _>("plan")).unwrap_or_default();
+
+    // Role/assignment is set per person; map via the primary (most-used) email on this machine.
+    let primary_email = sqlx::query_scalar::<_, String>(
+        "select user_email from captured_sessions where tenant_id=$1 and coalesce(hostname,'unidentified')=$2 \
+         group by user_email order by count(*) desc limit 1")
+        .bind(&user.tenant_id).bind(&host).fetch_optional(&pool).await.ok().flatten().unwrap_or_default();
     let rl = sqlx::query("select job_role, assignment from employee_roles where tenant_id=$1 and user_email=$2")
-        .bind(&user.tenant_id).bind(&email).fetch_optional(&pool).await.ok().flatten();
+        .bind(&user.tenant_id).bind(&primary_email).fetch_optional(&pool).await.ok().flatten();
     let role = rl.as_ref().map(|r| r.get::<String, _>("job_role")).unwrap_or_default();
     let assignment = rl.as_ref().and_then(|r| r.get::<Option<String>, _>("assignment")).unwrap_or_default();
 
@@ -2805,8 +2824,8 @@ pub async fn person(
            count(*) filter (where classification='personal') as personal, \
            count(*) filter (where classification not in ('work','personal')) as other, \
            coalesce(sum(event_count),0)::bigint as events \
-         from captured_sessions where tenant_id=$1 and user_email=$2")
-        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+         from captured_sessions where tenant_id=$1 and coalesce(hostname,'unidentified')=$2")
+        .bind(&user.tenant_id).bind(&host).fetch_one(&pool).await.ok();
     let (sessions, work, personal, other, events) = match &agg {
         Some(r) => (r.get::<i64, _>("sessions"), r.get::<i64, _>("work"), r.get::<i64, _>("personal"), r.get::<i64, _>("other"), r.get::<i64, _>("events")),
         None => (0, 0, 0, 0, 0),
@@ -2817,8 +2836,8 @@ pub async fn person(
            coalesce(sum((e.tokens_in+e.tokens_out)) filter (where cs.classification='personal'),0)::bigint as personal, \
            coalesce(sum(e.tokens_in+e.tokens_out),0)::bigint as total \
          from captured_events e join captured_sessions cs on cs.tenant_id=e.tenant_id and cs.session_id=e.session_id \
-         where cs.tenant_id=$1 and cs.user_email=$2")
-        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+         where cs.tenant_id=$1 and coalesce(cs.hostname,'unidentified')=$2")
+        .bind(&user.tenant_id).bind(&host).fetch_one(&pool).await.ok();
     let (tw, tp, tt) = match &tok {
         Some(r) => (r.get::<i64, _>("work"), r.get::<i64, _>("personal"), r.get::<i64, _>("total")),
         None => (0, 0, 0),
@@ -2827,32 +2846,35 @@ pub async fn person(
     let ot = sqlx::query(
         "select count(*) as scored, count(*) filter (where sc.label='on_task') as ontask \
          from session_scores sc join captured_sessions cs on cs.tenant_id=sc.tenant_id and cs.session_id=sc.session_id \
-         where cs.tenant_id=$1 and cs.user_email=$2")
-        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.ok();
+         where cs.tenant_id=$1 and coalesce(cs.hostname,'unidentified')=$2")
+        .bind(&user.tenant_id).bind(&host).fetch_one(&pool).await.ok();
     let (scored, ontask) = match &ot { Some(r) => (r.get::<i64, _>("scored"), r.get::<i64, _>("ontask")), None => (0, 0) };
     let ontask_pct = if scored > 0 { (ontask as f64 / scored as f64 * 100.0).round() as i64 } else { 0 };
 
     let findings_n = sqlx::query_scalar::<_, i64>(
         "select count(*) from findings f join captured_sessions cs on cs.tenant_id=f.tenant_id and cs.session_id=f.session_id \
-         where cs.tenant_id=$1 and cs.user_email=$2")
-        .bind(&user.tenant_id).bind(&email).fetch_one(&pool).await.unwrap_or(0);
+         where cs.tenant_id=$1 and coalesce(cs.hostname,'unidentified')=$2")
+        .bind(&user.tenant_id).bind(&host).fetch_one(&pool).await.unwrap_or(0);
 
     let devs = sqlx::query(
         "select device_id, hostname, os, compliance, last_seen, policy_present, login_locked, personal_account \
-         from devices where tenant_id=$1 and user_email=$2 order by last_seen desc nulls last")
-        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+         from devices where tenant_id=$1 and hostname=$2 order by last_seen desc nulls last")
+        .bind(&user.tenant_id).bind(&host).fetch_all(&pool).await.unwrap_or_default();
 
     let sess = sqlx::query(
         "select cs.session_id, cs.title, cs.classification, cs.event_count, sc.label as ontask, st.off_assignment \
          from captured_sessions cs \
          left join session_scores sc on sc.tenant_id=cs.tenant_id and sc.session_id=cs.session_id \
          left join session_triage st on st.tenant_id=cs.tenant_id and st.session_id=cs.session_id \
-         where cs.tenant_id=$1 and cs.user_email=$2 order by cs.last_ts desc nulls last limit 25")
-        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+         where cs.tenant_id=$1 and coalesce(cs.hostname,'unidentified')=$2 order by cs.last_ts desc nulls last limit 25")
+        .bind(&user.tenant_id).bind(&host).fetch_all(&pool).await.unwrap_or_default();
 
     let inds = sqlx::query(
-        "select kind, detail from indicators where tenant_id=$1 and user_email=$2 and status='open' order by created_at desc limit 30")
-        .bind(&user.tenant_id).bind(&email).fetch_all(&pool).await.unwrap_or_default();
+        "select i.kind, i.detail from indicators i \
+         join captured_sessions cs on cs.tenant_id=i.tenant_id and cs.session_id=i.session_id \
+         where i.tenant_id=$1 and coalesce(cs.hostname,'unidentified')=$2 and i.status='open' \
+         order by i.created_at desc limit 30")
+        .bind(&user.tenant_id).bind(&host).fetch_all(&pool).await.unwrap_or_default();
 
     let fmtk = |n: i64| -> String {
         if n >= 1_000_000 { format!("{:.1}M", n as f64 / 1e6) }
@@ -2861,15 +2883,17 @@ pub async fn person(
     };
 
     page(
-        "Person",
+        "Machine",
         html! {
             (nav())
             div.pagehead {
-                h1 style="margin-bottom:4px" { (email) }
-                a.muted href="/dashboard/people" { "← all people" }
+                h1 style="margin-bottom:4px" { (host) }
+                a.muted href="/dashboard/people" { "← all machines" }
             }
             p.muted style="margin-bottom:8px" {
-                "Role: " b { (if role.is_empty() { "—".to_string() } else { role.clone() }) }
+                "Subscription: " b { (if emails.is_empty() { "—".to_string() } else { emails.clone() }) }
+                "  ·  Plan: " b { (if plan.is_empty() { "—".to_string() } else { plan.clone() }) }
+                "  ·  Role: " b { (if role.is_empty() { "—".to_string() } else { role.clone() }) }
                 "  ·  Assigned to: " b { (if assignment.is_empty() { "—".to_string() } else { assignment.clone() }) }
                 "  ·  " a href="/dashboard/roles" { "edit" }
             }

@@ -862,7 +862,12 @@ async fn assemble_triageable(
 
 #[derive(Debug, Deserialize)]
 pub struct PendingQuery {
-    /// Restrict to one developer's sessions (the agent passes its own identity).
+    /// Restrict to one MACHINE's sessions (the seat = the computer). The agent passes
+    /// its own `device_id`; this is the primary identity.
+    #[serde(default)]
+    pub device: Option<String>,
+    /// Legacy: restrict by Claude Code login email. Kept for older agents; `device`
+    /// takes precedence when both are sent.
     #[serde(default)]
     pub seat: Option<String>,
     #[serde(default)]
@@ -885,15 +890,18 @@ pub async fn pending_endpoint(
     let rows = sqlx::query(
         "select s.session_id from captured_sessions s \
          left join session_triage t on t.tenant_id=s.tenant_id and t.session_id=s.session_id \
-         where s.tenant_id=$1 and ($2::text is null or s.user_email=$2) and ( \
+         where s.tenant_id=$1 \
+           and ($2::text is null or s.device_id=$2) \
+           and ($3::text is null or s.user_email=$3) and ( \
              (s.classification='pending' \
                and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now()))) \
              or (t.next_retry_at is not null and t.next_retry_at <= now() \
                  and not coalesce(t.human_reviewed, false)) \
          ) \
-         order by s.last_ts desc nulls last limit $3",
+         order by s.last_ts desc nulls last limit $4",
     )
     .bind(&tenant)
+    .bind(&q.device)
     .bind(&q.seat)
     .bind(limit)
     .fetch_all(&pool)

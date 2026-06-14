@@ -16,7 +16,7 @@ pub fn app(pool: PgPool) -> Router {
         .route("/web/login", post(web::login_post))
         .route("/dashboard", get(web::dashboard))
         .route("/dashboard/people", get(web::people))
-        .route("/dashboard/people/:email", get(web::person))
+        .route("/dashboard/people/:host", get(web::person))
         .route("/dashboard/sessions/:session_id", get(web::session_view))
         .route("/dashboard/sessions/:session_id/export", get(web::export))
         .route("/dashboard/sessions/:session_id/hold", post(web::hold))

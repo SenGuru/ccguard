@@ -19,7 +19,27 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use ccguard_core::capture::{CapturedSession, EventKind};
 use ccguard_core::triage::{self, TriageVerdict};
+
+/// The stable opening of every judge call's first user turn. The local `claude -p`
+/// classification invocation writes its OWN transcript into `~/.claude/projects/`,
+/// which capture would otherwise re-ingest as a 3-event session that then needs
+/// judging — a self-amplifying loop. We detect those by this fixed prefix (we send
+/// it, so it's reliable regardless of cwd) and skip them at capture.
+pub const JUDGE_SENTINEL: &str = "Classify the Claude Code session described in the input.";
+
+/// True if `session` is one of the agent's own local-Claude judge calls (not a real
+/// developer session) — so capture can drop it and never feed the loop.
+pub fn is_own_judge_session(session: &CapturedSession) -> bool {
+    session
+        .events
+        .iter()
+        .find(|e| e.kind == EventKind::UserPrompt)
+        .and_then(|e| e.content.as_deref())
+        .map(|c| c.trim_start().starts_with(JUDGE_SENTINEL))
+        .unwrap_or(false)
+}
 
 /// Wall-clock cap on a single local classification — a hung `claude` must never
 /// stall the sweep (or the dev's machine).

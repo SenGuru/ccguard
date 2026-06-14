@@ -3,3 +3,6 @@
 .env
 *.db
 .gstack/
+
+# Market / GTM / MRR research — keep local only, never publish
+RESEARCH-FINDINGS.md

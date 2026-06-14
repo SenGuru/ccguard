@@ -60,6 +60,11 @@ struct Args {
     /// (triage) Max sessions to classify in one run (bounds per-run quota). Default: 25.
     #[arg(long, default_value_t = 25)]
     triage_limit: u32,
+    /// (triage) Hard cap on classify calls per seat per WEEK — the runaway backstop.
+    /// Default 500 (~70/day, sized for a heavy all-day user). The idle-gate + backoff
+    /// are the real throttles.
+    #[arg(long, default_value_t = WEEKLY_CLASSIFY_CAP)]
+    weekly_classify_cap: u32,
     /// (triage) Bypass the idle-gate and backoff — run the sweep now even if Claude
     /// Code is active. For testing / an explicit admin-triggered run.
     #[arg(long)]
@@ -164,6 +169,18 @@ fn read_org_uuid(root: &serde_json::Value, oauth: Option<&serde_json::Value>) ->
     as_str(root.get("organizationUuid")).or_else(|| as_str(root.get("organization_uuid")))
 }
 
+/// Read the Claude subscription plan (e.g. "max", "pro") from
+/// `~/.claude/.credentials.json` → `claudeAiOauth.subscriptionType`. Side info only.
+fn read_subscription_plan(claude_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(claude_dir.join(".credentials.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("claudeAiOauth")?
+        .get("subscriptionType")?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 /// Build a tenant `PolicyConfig` from CLI flags and print its managed-settings.json
 /// document to stdout. Pure (no network) — intended for `... gen-policy > managed-settings.json`.
 fn run_gen_policy(args: &Args) -> anyhow::Result<()> {
@@ -264,8 +281,10 @@ fn run_attest(args: &Args, claude_dir: &Path, poster: &Poster) -> anyhow::Result
 }
 
 /// Default hard cap on classify calls per seat per week — the backstop that keeps
-/// the monitor from ever eating the developer's own Claude Code quota.
-const WEEKLY_CLASSIFY_CAP: u32 = 100;
+/// the monitor from ever eating the developer's own Claude Code quota. Sized for a
+/// heavy all-day user (~70/day); the idle-gate + rate-limit backoff are the real
+/// throttles, this is just a runaway backstop. Override with `--weekly-classify-cap`.
+const WEEKLY_CLASSIFY_CAP: u32 = 500;
 /// Don't classify while the dev is actively coding (transcript touched recently).
 const IDLE_GATE_SECS: i64 = 300;
 
@@ -298,7 +317,7 @@ fn is_rate_limited(e: &anyhow::Error) -> bool {
 fn run_triage(
     args: &Args,
     claude_dir: &Path,
-    email: &str,
+    _email: &str,
     poster: &Poster,
     st: &mut State,
     state_path: &Path,
@@ -323,17 +342,21 @@ fn run_triage(
         }
     }
 
-    let remaining = st.weekly_remaining(&week, WEEKLY_CLASSIFY_CAP);
+    let remaining = st.weekly_remaining(&week, args.weekly_classify_cap);
     if remaining == 0 {
         println!(
-            "CCGuard agent: weekly classify budget reached ({WEEKLY_CLASSIFY_CAP}); deferring."
+            "CCGuard agent: weekly classify budget reached ({}); deferring.", args.weekly_classify_cap
         );
         st.save(state_path)?;
         return Ok(());
     }
     let limit = args.triage_limit.min(remaining);
 
-    let pending = poster.get_triage_pending(email, limit)?;
+    // Match pending work by THIS MACHINE (the seat = the computer), not the Claude
+    // Code login email — a subscription account can change/be shared, the machine
+    // doesn't. The agent classifies its own machine's sessions with its local seat.
+    let device_id = enforce_paths::device_id();
+    let pending = poster.get_triage_pending(&device_id, limit)?;
     if pending.is_empty() {
         println!("CCGuard agent: no unclassified sessions to triage.");
         return Ok(());
@@ -346,7 +369,7 @@ fn run_triage(
     let mut done = 0usize;
     let mut failed = 0usize;
     for item in &pending {
-        if st.weekly_remaining(&week, WEEKLY_CLASSIFY_CAP) == 0 {
+        if st.weekly_remaining(&week, args.weekly_classify_cap) == 0 {
             println!("  weekly budget exhausted mid-sweep — stopping.");
             break;
         }
@@ -499,6 +522,11 @@ fn run_capture_once(
 ) -> anyhow::Result<()> {
     let mut captured = 0usize; // files that fully sent (all chunks 202)
     let mut failed = 0usize; // files with an unsent tail (will retry next run)
+    // Machine identity (the seat = the computer, not the shareable subscription
+    // email) + the subscription plan, computed once per pass.
+    let device_id = enforce_paths::device_id();
+    let hostname = enforce_paths::hostname();
+    let plan = read_subscription_plan(claude_dir);
     for file in paths::list_transcripts(claude_dir) {
         let key = file.to_string_lossy().to_string();
         let content = match std::fs::read_to_string(&file) {
@@ -510,8 +538,20 @@ fn run_capture_once(
         }
         let mut session = transcript::parse_session(&content, None);
 
-        // Populate identity + repo
+        // Skip the agent's OWN judge transcripts. Classifying a session runs a local
+        // `claude -p` call, which writes its own transcript into ~/.claude/projects/;
+        // re-ingesting it creates a self-feeding loop of 3-event "Classify the..."
+        // sessions. Drop them here so they never enter the corpus.
+        if local_judge::is_own_judge_session(&session) {
+            continue;
+        }
+
+        // Populate identity + repo. The machine is the seat; the email is just the
+        // (possibly shared) subscription account.
         session.user_email = email.to_string();
+        session.device_id = Some(device_id.clone());
+        session.hostname = Some(hostname.clone());
+        session.plan = plan.clone();
         if let Some(cwd) = session.cwd.as_deref() {
             session.repo = repos.resolve(cwd);
             // Content-free provenance signals (git + manifest config) for this dir.
@@ -634,11 +674,11 @@ fn run_token_events_once(
 }
 
 /// Service mode: run forever. Capture every `capture_interval` seconds (cheap —
-/// keeps the server's secret-scanning + token meter fresh); run the triage pass
-/// once per calendar day during an idle window, with catch-up if a day was missed
-/// (laptop asleep/off). Both passes already self-gate (capture is idempotent via
-/// the watermark; triage is idle-gated + weekly-budget-capped + backs off on
-/// rate limits), so the loop just paces them.
+/// keeps the server's secret-scanning + token meter fresh); run the triage pass on
+/// every idle window so fresh sessions are judged within a tick of the dev stepping
+/// away, not once a day. Both passes self-gate (capture is idempotent via the
+/// watermark; triage is idle-gated + weekly-budget-capped + backs off on rate
+/// limits), so the loop just paces them.
 fn run_service(
     args: &Args,
     claude_dir: &Path,
@@ -649,7 +689,7 @@ fn run_service(
 ) -> anyhow::Result<()> {
     let interval = std::time::Duration::from_secs(args.capture_interval.max(30));
     println!(
-        "CCGuard agent: service mode — capture every {}s, triage once daily (idle-gated). Ctrl-C to stop.",
+        "CCGuard agent: service mode — capture every {}s, triage every idle window (idle-gated, weekly-capped). Ctrl-C to stop.",
         interval.as_secs()
     );
     let mut repos = repo::RepoCache::new();
@@ -662,24 +702,23 @@ fn run_service(
             eprintln!("CCGuard agent: capture pass error (will retry next tick): {e}");
         }
 
-        // Daily triage pass: once per calendar day, only when not already done today.
-        // run_triage itself enforces the idle-gate, weekly budget, and backoff, and
-        // returns early (without doing work) when the dev is active — so on an active
-        // day we keep trying each tick until an idle window opens, then mark the date.
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        if !st.triage_ran_today(&today) {
-            let idle_ok = args.force
-                || seconds_since_active(claude_dir)
-                    .map(|s| s >= IDLE_GATE_SECS)
-                    .unwrap_or(true);
-            if idle_ok {
-                if let Err(e) = run_triage(args, claude_dir, email, poster, st, state_path) {
-                    eprintln!("CCGuard agent: triage pass error: {e}");
-                } else {
-                    // Mark the day done only after a real (idle) attempt ran.
-                    st.mark_triage_date(&today);
-                    let _ = st.save(state_path);
-                }
+        // Triage pass: run on EVERY idle window (not once a day), so freshly captured
+        // sessions get judged within a tick of the dev stepping away instead of sitting
+        // `pending` until a daily window. run_triage self-enforces the idle-gate, the
+        // weekly classify budget, and rate-limit backoff; with nothing pending it's a
+        // cheap GET no-op. We still only attempt when idle so we never compete with
+        // active coding. (--force bypasses the idle-gate.)
+        let idle_ok = args.force
+            || seconds_since_active(claude_dir)
+                .map(|s| s >= IDLE_GATE_SECS)
+                .unwrap_or(true);
+        if idle_ok {
+            if let Err(e) = run_triage(args, claude_dir, email, poster, st, state_path) {
+                eprintln!("CCGuard agent: triage pass error: {e}");
+            } else {
+                // Record the last triage day (observability; no longer a once-a-day gate).
+                st.mark_triage_date(&chrono::Utc::now().format("%Y-%m-%d").to_string());
+                let _ = st.save(state_path);
             }
         }
 
