@@ -1,0 +1,14 @@
+{
+  "deploy": {
+    "sshUser": "root",
+    "remotePath": "/opt/ccguard",
+    "serviceName": "ccguard",
+    "subdomain": "ccguard-qa-1.landessware.com",
+    "internalBind": "127.0.0.1:7070",
+    "publicHttpsPort": 443,
+    "maxBodyMb": 64,
+    "envFile": "qa.env",
+    "letsEncrypt": true,
+    "letsEncryptEmail": "senthilguru246@gmail.com"
+  }
+}

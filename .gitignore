@@ -4,5 +4,12 @@
 *.db
 .gstack/
 
+# Deploy: ssh keys, per-env secret env files, build artifacts.
+# The committed deploy/*.env.example template stays tracked.
+deploy/keys/
+deploy/dist/
+deploy/*.env
+!deploy/*.env.example
+
 # Market / GTM / MRR research — keep local only, never publish
 RESEARCH-FINDINGS.md
