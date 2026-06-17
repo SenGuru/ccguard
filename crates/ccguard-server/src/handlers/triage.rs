@@ -244,6 +244,38 @@ pub async fn assemble_input(
     .flatten()
     .filter(|a| !a.trim().is_empty());
 
+    // Re-judge context: if this session already has a (non-human) verdict and has
+    // GROWN since it was judged, hand the judge the prior verdict + a directive to
+    // reassess the new activity and call out drift. None on a first-time judgement.
+    let prior_verdict = sqlx::query(
+        "select t.label, t.off_assignment, coalesce(t.judged_event_count,0) as jec, s.event_count as ec \
+         from session_triage t \
+         join captured_sessions s on s.tenant_id=t.tenant_id and s.session_id=t.session_id \
+         where t.tenant_id=$1 and t.session_id=$2 and not coalesce(t.human_reviewed,false)",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .and_then(|r| {
+        let label: String = r.get("label");
+        let off: bool = r.get("off_assignment");
+        let jec: i32 = r.get("jec");
+        let ec: i32 = r.get("ec");
+        if ec > jec {
+            let lane = if off { " and OFF their assignment" } else { "" };
+            Some(format!(
+                "this session was previously judged {}{} after {jec} events; it has since grown to {ec}. \
+Reassess including the NEW activity. If the newer work has drifted (company work that turned personal, \
+or on-assignment work that moved to a different project), reflect that in label / mixed / off_assignment.",
+                label.to_uppercase(),
+                lane
+            ))
+        } else {
+            None
+        }
+    });
+
     let mut input = TriageInput {
         repo_org: meta.get("repo_org"),
         repo_name: meta.get("repo_name"),
@@ -253,6 +285,7 @@ pub async fn assemble_input(
         prompts,
         tool_targets,
         assignment,
+        prior_verdict,
         ..Default::default()
     };
     gather_evidence(pool, tenant_id, session_id, &mut input).await?;
@@ -608,6 +641,21 @@ pub async fn apply_verdict(
     .await?
     .unwrap_or(0);
 
+    // Prior verdict (for drift detection) — read BEFORE the upsert overwrites it.
+    // Only an AI verdict counts (human labels are authoritative, never "drift").
+    let prior = sqlx::query(
+        "select label, off_assignment, coalesce(judged_event_count,0) as jec \
+         from session_triage where tenant_id=$1 and session_id=$2 \
+           and not coalesce(human_reviewed, false)",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    let prior_label: Option<String> = prior.as_ref().map(|r| r.get("label"));
+    let prior_off: bool = prior.as_ref().map(|r| r.get("off_assignment")).unwrap_or(false);
+    let prior_jec: i32 = prior.as_ref().map(|r| r.get("jec")).unwrap_or(0);
+
     sqlx::query(
         "insert into session_triage \
          (tenant_id, session_id, label, confidence, reason, model, resolved_by, structural, \
@@ -701,6 +749,37 @@ pub async fn apply_verdict(
             .execute(pool)
             .await;
         }
+
+        // Drift indicator: a RE-JUDGE of a GROWN session that flipped for the worse —
+        // work that turned personal, or on-assignment work that drifted off it. This
+        // is the "started productive, then went personal mid-session" signal.
+        if let Some(pl) = &prior_label {
+            let grew = ec > prior_jec;
+            let to_personal = pl == "work" && verdict.label.as_str() == "personal";
+            let to_off = applied
+                && verdict.label.as_str() == "work"
+                && verdict.off_assignment
+                && !prior_off;
+            if grew && (to_personal || to_off) {
+                let what = if to_personal {
+                    "started as work, newer activity turned personal"
+                } else {
+                    "was on-assignment, newer activity drifted off it"
+                };
+                let _ = sqlx::query(
+                    "insert into indicators (tenant_id, user_email, session_id, kind, detail, status) \
+                     values ($1,$2,$3,'drift',$4,'open') \
+                     on conflict (tenant_id, session_id, kind) do update set \
+                       detail = excluded.detail, status = 'open'",
+                )
+                .bind(tenant_id)
+                .bind(&email)
+                .bind(session_id)
+                .bind(format!("drift: {what} — {}", verdict.reason))
+                .execute(pool)
+                .await;
+            }
+        }
     }
 
     Ok(TriageOutcome { verdict: verdict.clone(), applied, abstained })
@@ -732,6 +811,8 @@ pub async fn run_unclassified(
                and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now()))) \
              or (t.next_retry_at is not null and t.next_retry_at <= now() \
                  and not coalesce(t.human_reviewed, false)) \
+             or (t.session_id is not null and not coalesce(t.human_reviewed, false) \
+                 and s.event_count - coalesce(t.judged_event_count, 0) >= 10) \
          ) \
          order by s.last_ts desc nulls last limit $2",
     )
@@ -897,6 +978,8 @@ pub async fn pending_endpoint(
                and (t.session_id is null or (t.next_retry_at is not null and t.next_retry_at <= now()))) \
              or (t.next_retry_at is not null and t.next_retry_at <= now() \
                  and not coalesce(t.human_reviewed, false)) \
+             or (t.session_id is not null and not coalesce(t.human_reviewed, false) \
+                 and s.event_count - coalesce(t.judged_event_count, 0) >= 10) \
          ) \
          order by s.last_ts desc nulls last limit $4",
     )

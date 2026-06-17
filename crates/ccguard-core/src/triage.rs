@@ -188,6 +188,12 @@ pub struct TriageInput {
     /// `None` when the employee has no assignment configured.
     #[serde(default)]
     pub assignment: Option<String>,
+    /// On a RE-JUDGE (the session was judged before and has since grown), the prior
+    /// verdict + a directive to reassess the NEW activity and call out any drift
+    /// (e.g. work that turned personal, or on-assignment that drifted off it). `None`
+    /// for a first-time judgement.
+    #[serde(default)]
+    pub prior_verdict: Option<String>,
 }
 
 /// Structured Tier-A policy: typed predicates the judge treats as authoritative.
@@ -322,6 +328,9 @@ pub fn user_prompt(input: &TriageInput) -> String {
     }
     if let Some(a) = field(&input.assignment) {
         s.push_str(&format!("- This developer is assigned to: {a}\n"));
+    }
+    if let Some(pv) = field(&input.prior_verdict) {
+        s.push_str(&format!("- RE-JUDGE: {pv}\n"));
     }
 
     if input.prompts.is_empty() {
@@ -731,6 +740,27 @@ mod tests {
             ..Default::default()
         });
         assert!(up.contains("This developer is assigned to: Grove"));
+    }
+
+    #[test]
+    fn user_prompt_renders_prior_verdict_on_rejudge() {
+        let up = user_prompt(&TriageInput {
+            title: Some("billing".into()),
+            prompts: vec!["fix retries".into()],
+            prior_verdict: Some(
+                "this session was previously judged WORK after 20 events; it has since grown to 35."
+                    .into(),
+            ),
+            ..Default::default()
+        });
+        assert!(up.contains("RE-JUDGE:"), "re-judge directive must render");
+        assert!(up.contains("previously judged WORK"));
+        // Absent on a first-time judgement.
+        let first = user_prompt(&TriageInput {
+            prompts: vec!["x".into()],
+            ..Default::default()
+        });
+        assert!(!first.contains("RE-JUDGE:"));
     }
 
     #[test]

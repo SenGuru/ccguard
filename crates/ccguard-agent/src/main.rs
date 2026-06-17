@@ -860,6 +860,54 @@ fn capture_one_session(
     }
 }
 
+/// Install-time baseline: record the current end (max event `seq`) of every EXISTING
+/// session file as its watermark, WITHOUT sending anything. Runs once, on the first
+/// capture pass. Afterwards only post-install activity is ever captured — dormant
+/// months-old sessions never grow past their baseline so they're never sent; brand
+/// new sessions (no watermark) capture fully; a pre-existing session that's still
+/// being worked on contributes only its new (post-install) events. Returns the count.
+fn baseline_watermarks(claude_dir: &Path, st: &mut State) -> usize {
+    let mut seen = 0usize;
+    let mut mark_max = |key: String, events_max: Option<i64>, st: &mut State, seen: &mut usize| {
+        if let Some(max) = events_max {
+            st.set_capture_watermark(&key, max);
+            *seen += 1;
+        }
+    };
+    for file in paths::list_transcripts(claude_dir) {
+        if let Ok(c) = std::fs::read_to_string(&file) {
+            if c.is_empty() {
+                continue;
+            }
+            let s = transcript::parse_session(&c, None);
+            mark_max(file.to_string_lossy().to_string(), s.events.iter().map(|e| e.seq).max(), st, &mut seen);
+        }
+    }
+    if let Some(home) = paths::codex_home() {
+        for file in paths::list_codex_sessions(&home) {
+            if let Ok(c) = std::fs::read_to_string(&file) {
+                if c.is_empty() {
+                    continue;
+                }
+                let s = codex::parse_session(&c);
+                mark_max(file.to_string_lossy().to_string(), s.events.iter().map(|e| e.seq).max(), st, &mut seen);
+            }
+        }
+    }
+    if let Some(home) = paths::copilot_home() {
+        for file in paths::list_copilot_sessions(&home) {
+            if let Ok(c) = std::fs::read_to_string(&file) {
+                if c.is_empty() {
+                    continue;
+                }
+                let s = copilot::parse_session(&c);
+                mark_max(file.to_string_lossy().to_string(), s.events.iter().map(|e| e.seq).max(), st, &mut seen);
+            }
+        }
+    }
+    seen
+}
+
 fn run_capture_once(
     claude_dir: &Path,
     email: &str,
@@ -869,6 +917,18 @@ fn run_capture_once(
     repos: &mut repo::RepoCache,
     sigs: &mut signals::SignalCache,
 ) -> anyhow::Result<()> {
+    // First pass after install: baseline every EXISTING session at its current end so
+    // we only ever capture activity from agent-install onward (never dormant history).
+    if !st.is_baselined() {
+        let n = baseline_watermarks(claude_dir, st);
+        st.mark_baselined();
+        st.save(state_path)?;
+        println!(
+            "CCGuard agent: install baseline set — {n} existing session(s) marked pre-install; only new activity from here on is captured."
+        );
+        return Ok(());
+    }
+
     let mut captured = 0usize; // files that fully sent (all chunks 202)
     let mut failed = 0usize; // files with an unsent tail (will retry next run)
     let mut by_tool: std::collections::BTreeMap<&'static str, usize> =

@@ -26,6 +26,12 @@ pub struct State {
     /// (laptop asleep/off). Empty = never.
     #[serde(default)]
     pub triage_last_date: String,
+    /// Install-time baseline marker. On first capture pass the agent records the
+    /// current end of every EXISTING session file as its watermark (without sending
+    /// anything), so only activity from agent-install onward is ever captured — we
+    /// never hoover up months-old dormant history. `serde(default)` = false.
+    #[serde(default)]
+    pub baseline_done: bool,
 }
 
 impl State {
@@ -95,6 +101,16 @@ impl State {
     pub fn mark_triage_date(&mut self, date: &str) {
         self.triage_last_date = date.to_string();
     }
+
+    /// Whether the install-time baseline pass has run (existing sessions watermarked).
+    pub fn is_baselined(&self) -> bool {
+        self.baseline_done
+    }
+
+    /// Mark the install-time baseline as complete.
+    pub fn mark_baselined(&mut self) {
+        self.baseline_done = true;
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +155,21 @@ mod tests {
         assert!(s.triage_ran_today("2026-06-13"));
         // A new day → false again (today's pass is due).
         assert!(!s.triage_ran_today("2026-06-14"));
+    }
+
+    #[test]
+    fn baseline_marker_defaults_false_and_roundtrips() {
+        let tmp = std::env::temp_dir().join(format!("ccg_state_base_{}.json", std::process::id()));
+        let mut s = State::default();
+        assert!(!s.is_baselined(), "a fresh install must not be baselined yet");
+        s.mark_baselined();
+        s.save(&tmp).unwrap();
+        let loaded = State::load(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        assert!(loaded.is_baselined());
+        // Legacy state (predating the field) must load as not-baselined.
+        let legacy: State = serde_json::from_str(r#"{"offsets":{}}"#).unwrap();
+        assert!(!legacy.is_baselined());
     }
 
     #[test]
