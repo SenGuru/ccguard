@@ -82,6 +82,9 @@ mod tests {
         CapturedSession {
             session_id: "sess-1".to_string(),
             user_email: "dev@acme.com".to_string(),
+            device_id: None,
+            hostname: None,
+            plan: None,
             repo: Repo {
                 host: Some("github.com".to_string()),
                 org: Some("acme".to_string()),
