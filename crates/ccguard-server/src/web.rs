@@ -134,7 +134,7 @@ small{color:var(--ink-3)}\
 table{width:100%;border-collapse:collapse;margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}\
 th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-2);font-size:13px}thead th{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:var(--panel-2)}tr:last-child td{border-bottom:0}tbody tr:hover{background:rgba(91,135,255,.045)}td a{color:var(--accent-2)}\
 .badge{display:inline-block;padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:600;font-family:'JetBrains Mono',monospace}\
-.work,.compliant,.on_task{background:var(--ok-bg);color:var(--ok)}.personal,.personal_repo{background:var(--bad-bg);color:var(--bad)}.unknown,.stale,.low{background:rgba(140,151,180,.12);color:var(--ink-2)}.pending{background:var(--accent-wash);color:var(--accent-2)}\
+.work,.compliant,.on_task{background:var(--ok-bg);color:var(--ok)}.personal,.personal_repo{background:var(--bad-bg);color:var(--bad)}.unknown,.stale,.low{background:rgba(140,151,180,.12);color:var(--ink-2)}.pending{background:var(--accent-wash);color:var(--accent-2)}.claude_code{background:rgba(217,119,87,.14);color:#c2410c}.codex_cli{background:rgba(16,163,127,.16);color:#0f766e}.copilot_cli{background:rgba(124,58,237,.14);color:#6d28d9}\
 .high,.tampered,.noncompliant_account,.off_task{background:var(--bad-bg);color:var(--bad)}.medium,.drifted,.review,.off_assignment,.label_drifted{background:var(--warn-bg);color:var(--warn)}.non_engineer_coding{background:var(--violet-bg);color:var(--violet)}\
 .finding{font-size:12px;margin:4px 0 0;color:var(--warn)}\
 .ev{border:1px solid var(--line);border-left:3px solid var(--line);margin:8px 0;padding:11px 15px;border-radius:9px;background:var(--panel)}\
@@ -253,7 +253,8 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
         }
     }
     let sessions = sqlx::query(
-        "select session_id, user_email, classification, repo_org, repo_name, title, event_count, last_ts \
+        "select session_id, user_email, classification, repo_org, repo_name, title, event_count, last_ts, \
+                coalesce(tool,'claude_code') as tool \
          from captured_sessions where tenant_id = $1 order by last_ts desc nulls last limit 100",
     )
     .bind(&user.tenant_id)
@@ -324,7 +325,7 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
         "Dashboard",
         html! {
             (nav())
-            h1 { "Claresso — captured Claude Code activity" }
+            h1 { "Claresso — captured AI coding activity" }
             div.card style="display:flex;gap:32px;align-items:center" {
                 div style="width:220px" { canvas id="donut" {} }
                 div {
@@ -354,7 +355,7 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                 }
             }
             table {
-                thead { tr { th{"Session"} th{"User"} th{"Repo"} th{"Class"} th{"Events"} } }
+                thead { tr { th{"Session"} th{"Tool"} th{"User"} th{"Repo"} th{"Class"} th{"Events"} } }
                 tbody {
                     @for s in &sessions {
                         @let sid: String = s.get("session_id");
@@ -364,8 +365,15 @@ pub async fn dashboard(user: WebUser, State(pool): State<PgPool>) -> Html<String
                         @let title: Option<String> = s.get("title");
                         @let ec: i32 = s.get("event_count");
                         @let email: String = s.get("user_email");
+                        @let tool: String = s.get("tool");
+                        @let tool_label = match tool.as_str() {
+                            "codex_cli" => "Codex",
+                            "copilot_cli" => "Copilot",
+                            _ => "Claude Code",
+                        };
                         tr {
                             td { a href={"/dashboard/sessions/" (sid)} { (title.clone().unwrap_or_else(|| sid.chars().take(8).collect())) } }
+                            td { span.badge.(tool) { (tool_label) } }
                             td { (email) }
                             td { (org.clone().unwrap_or_default()) "/" (name.clone().unwrap_or_default()) }
                             td { span.badge.(class) { (class) } }
