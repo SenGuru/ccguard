@@ -74,6 +74,12 @@ struct Args {
     /// (with catch-up if a day was missed). This is how the installed agent runs.
     #[arg(long)]
     service: bool,
+    /// Dry-run: run the REAL capture pipeline (parse transcripts, resolve repos,
+    /// gather git provenance signals, classify locally) and print a per-session
+    /// summary of what WOULD be reported — but post nothing to the server. Needs no
+    /// token and no network. Use it to verify a machine's `~/.claude` looks right.
+    #[arg(long)]
+    dry_run: bool,
     /// (service) Seconds between capture passes. Default 900 (15 min).
     #[arg(long, default_value_t = 900)]
     capture_interval: u64,
@@ -98,6 +104,20 @@ struct Args {
     /// (gen-policy) Env var holding the ingest token the hook passes. Default: CCGUARD_TOKEN
     #[arg(long)]
     token_env: Option<String>,
+    /// (dry-run) Corp git host on the allowlist, e.g. github.com. Repeatable.
+    /// When set, dry-run runs the real provenance cascade and prints the bucket.
+    #[arg(long = "corp-host")]
+    corp_host: Vec<String>,
+    /// (dry-run) Corp org/owner on the allowlist, e.g. acme-corp. Repeatable.
+    #[arg(long = "corp-org")]
+    corp_org: Vec<String>,
+    /// (dry-run) Corp email domain, e.g. acme-corp.com. Repeatable.
+    #[arg(long = "corp-domain")]
+    corp_domain: Vec<String>,
+    /// (dry-run) Personal email domain to treat as an affirmative personal signal,
+    /// e.g. gmail.com. Repeatable.
+    #[arg(long = "personal-domain")]
+    personal_domain: Vec<String>,
 }
 
 fn read_since(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
@@ -422,6 +442,164 @@ fn run_triage(
     Ok(())
 }
 
+/// Dry-run: exercise the real capture pipeline against this machine's `~/.claude`
+/// and print, per session, what WOULD be reported — without posting anything. If
+/// `--corp-host`/`--corp-org`/`--corp-domain` are given it also runs the real
+/// `ccguard_core::provenance` cascade and prints the structural bucket each session
+/// resolves to (WORK / WORK-PROVISIONAL / PERSONAL / UNCLASSIFIED). Pure inspection:
+/// no token, no network, nothing written.
+fn run_dry_run(args: &Args, claude_dir: &Path) -> anyhow::Result<()> {
+    use ccguard_core::capture::EventKind;
+    use ccguard_core::provenance::{classify_raw, ProvenancePolicy};
+    use std::collections::BTreeMap;
+
+    let (acct_email, org) = read_active_account(claude_dir);
+    let email = args
+        .email
+        .clone()
+        .or_else(|| acct_email.clone())
+        .unwrap_or_else(|| "unknown@local".to_string());
+    let plan = read_subscription_plan(claude_dir);
+    let device_id = enforce_paths::device_id();
+    let hostname = enforce_paths::hostname();
+
+    println!("CCGuard agent — DRY RUN (no token, no network, nothing posted)");
+    println!("  claude dir : {}", claude_dir.display());
+    println!(
+        "  device id  : {device_id}   host: {hostname}   os: {}",
+        enforce_paths::os_str()
+    );
+    println!(
+        "  identity   : {email}   org: {}   plan: {}",
+        org.as_deref().unwrap_or("(none)"),
+        plan.as_deref().unwrap_or("(none)")
+    );
+
+    let has_policy =
+        !args.corp_host.is_empty() || !args.corp_org.is_empty() || !args.corp_domain.is_empty();
+    let policy = ProvenancePolicy {
+        corp_hosts: args.corp_host.clone(),
+        corp_orgs: args.corp_org.clone(),
+        corp_email_domains: args.corp_domain.clone(),
+        personal_email_domains: args.personal_domain.clone(),
+        ..Default::default()
+    };
+    if has_policy {
+        println!(
+            "  allowlist  : hosts={:?} orgs={:?} corp-domains={:?} personal-domains={:?}",
+            policy.corp_hosts,
+            policy.corp_orgs,
+            policy.corp_email_domains,
+            policy.personal_email_domains
+        );
+    } else {
+        println!("  allowlist  : (none — pass --corp-host/--corp-org/--corp-domain to see buckets)");
+    }
+
+    let files = paths::list_transcripts(claude_dir);
+    println!("\n  {} transcript file(s) found.\n", files.len());
+
+    let mut repos = repo::RepoCache::new();
+    let mut sigs = signals::SignalCache::new(&args.corp_env);
+    let (mut total_sessions, mut total_events, mut skipped_judge) = (0usize, 0usize, 0usize);
+    let mut bucket_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+
+    for file in &files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) if !c.is_empty() => c,
+            _ => continue,
+        };
+        let mut session = transcript::parse_session(&content, None);
+        if local_judge::is_own_judge_session(&session) {
+            skipped_judge += 1;
+            continue;
+        }
+        session.user_email = email.clone();
+        session.device_id = Some(device_id.clone());
+        session.hostname = Some(hostname.clone());
+        session.plan = plan.clone();
+        if let Some(cwd) = session.cwd.as_deref() {
+            session.repo = repos.resolve(cwd);
+            session.signals = Some(sigs.resolve(cwd));
+        }
+        if session.session_id.is_empty() {
+            session.session_id = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+        }
+
+        total_sessions += 1;
+        total_events += session.events.len();
+
+        let (mut prompts, mut edits, mut tools, mut tin, mut tout) = (0, 0, 0, 0i64, 0i64);
+        for e in &session.events {
+            match e.kind {
+                EventKind::UserPrompt => prompts += 1,
+                EventKind::FileEdit => edits += 1,
+                EventKind::ToolCall => tools += 1,
+                _ => {}
+            }
+            tin += e.tokens_in;
+            tout += e.tokens_out;
+        }
+
+        let repo = &session.repo;
+        let repo_str = match (repo.org.as_deref(), repo.name.as_deref()) {
+            (Some(o), Some(n)) => format!("{o}/{n}"),
+            _ => repo
+                .path
+                .as_deref()
+                .unwrap_or("(no cwd)")
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or("(no cwd)")
+                .to_string(),
+        };
+
+        println!(
+            "  • {:<28} {:>2}p {:>2}e {:>2}t  ~{}k tok  {}",
+            truncate(session.title.as_deref().unwrap_or(&session.session_id), 28),
+            prompts,
+            edits,
+            tools,
+            (tin + tout) / 1000,
+            repo_str
+        );
+        if has_policy {
+            let raw = session.signals.clone().unwrap_or_default();
+            let v = classify_raw(&raw, &policy);
+            *bucket_counts.entry(v.class.as_str()).or_insert(0) += 1;
+            println!("      bucket: {:<16} [{}]", v.class.as_str(), v.reasons.join(","));
+        }
+    }
+
+    println!(
+        "\n  summary: {total_sessions} session(s), {total_events} event(s){}.",
+        if skipped_judge > 0 {
+            format!(", {skipped_judge} own-judge transcript(s) skipped")
+        } else {
+            String::new()
+        }
+    );
+    if has_policy {
+        println!("  structural buckets: {bucket_counts:?}");
+        println!("  (the AI judge resolves WORK-PROVISIONAL / UNCLASSIFIED into work|personal on the dashboard)");
+    }
+    Ok(())
+}
+
+/// Truncate a string to `n` chars with an ellipsis (dry-run display helper).
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let claude_dir = args
@@ -430,7 +608,6 @@ fn main() -> anyhow::Result<()> {
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
         .expect("could not determine claude dir");
-
     // gen-policy is pure (no network, no token) and takes priority over every other mode.
     match args.mode.as_deref() {
         Some("gen-policy") => return run_gen_policy(&args),
@@ -438,6 +615,12 @@ fn main() -> anyhow::Result<()> {
             anyhow::bail!("unknown mode '{other}' (only 'gen-policy' is supported)");
         }
         None => {}
+    }
+
+    // Dry-run is pure (no token, no network): run the REAL capture pipeline and
+    // print what would be reported. Useful to validate a machine's ~/.claude.
+    if args.dry_run {
+        return run_dry_run(&args, &claude_dir);
     }
 
     // All remaining modes require an ingest token.
