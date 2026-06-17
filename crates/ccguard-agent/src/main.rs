@@ -808,12 +808,18 @@ fn capture_one_session(
         session.session_id = fallback_id.to_string();
     }
 
-    // Only send events past the confirmed-sent high-water mark for this file.
+    // Normally send only events past the confirmed-sent high-water mark. BUT if this
+    // file was FROZEN by the install baseline and has since grown (a pre-existing
+    // session reopened and worked on after install), capture the WHOLE session once
+    // (full 1..N history for context), then unfreeze and go incremental.
     let wm = st.capture_watermark(file_key);
+    let reactivated =
+        st.is_baseline_frozen(file_key) && session.events.iter().any(|e| e.seq > wm);
+    let lower = if reactivated { -1 } else { wm };
     let new_events: Vec<_> = session
         .events
         .iter()
-        .filter(|e| e.seq > wm)
+        .filter(|e| e.seq > lower)
         .cloned()
         .collect();
     if new_events.is_empty() {
@@ -853,6 +859,11 @@ fn capture_one_session(
     if max_sent > wm {
         st.set_capture_watermark(file_key, max_sent);
     }
+    // A reactivated frozen session that fully sent is now a normal incremental
+    // session; keep it frozen on a partial failure so the full capture retries.
+    if reactivated && !had_error {
+        st.unfreeze_baseline(file_key);
+    }
     if had_error {
         CapOutcome::Failed
     } else {
@@ -871,6 +882,9 @@ fn baseline_watermarks(claude_dir: &Path, st: &mut State) -> usize {
     let mut mark_max = |key: String, events_max: Option<i64>, st: &mut State, seen: &mut usize| {
         if let Some(max) = events_max {
             st.set_capture_watermark(&key, max);
+            // Mark it frozen: never sent, but if it's reopened post-install we'll
+            // capture the whole session once (full context), then go incremental.
+            st.freeze_baseline(&key);
             *seen += 1;
         }
     };

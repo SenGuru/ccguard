@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,12 @@ pub struct State {
     /// never hoover up months-old dormant history. `serde(default)` = false.
     #[serde(default)]
     pub baseline_done: bool,
+    /// Session files the install baseline FROZE: pre-existing sessions watermarked at
+    /// their pre-install end. The first time a frozen file grows (the session is
+    /// reopened and worked on after install), we capture the WHOLE session once (full
+    /// 1..N history for context), then unfreeze it and go incremental. `serde(default)`.
+    #[serde(default)]
+    pub baseline_frozen: HashSet<String>,
 }
 
 impl State {
@@ -111,6 +117,22 @@ impl State {
     pub fn mark_baselined(&mut self) {
         self.baseline_done = true;
     }
+
+    /// Mark a file as frozen by the install baseline (existing session, watermarked
+    /// at its pre-install end, never sent).
+    pub fn freeze_baseline(&mut self, file: &str) {
+        self.baseline_frozen.insert(file.to_string());
+    }
+
+    /// Whether `file` is still baseline-frozen (existing, not yet captured since install).
+    pub fn is_baseline_frozen(&self, file: &str) -> bool {
+        self.baseline_frozen.contains(file)
+    }
+
+    /// Clear a file's frozen flag once it's been (fully) captured after reactivation.
+    pub fn unfreeze_baseline(&mut self, file: &str) {
+        self.baseline_frozen.remove(file);
+    }
 }
 
 #[cfg(test)]
@@ -163,10 +185,17 @@ mod tests {
         let mut s = State::default();
         assert!(!s.is_baselined(), "a fresh install must not be baselined yet");
         s.mark_baselined();
+        // A frozen (pre-existing) session round-trips; unfreezing clears it.
+        s.freeze_baseline("old.jsonl");
+        assert!(s.is_baseline_frozen("old.jsonl"));
+        assert!(!s.is_baseline_frozen("new.jsonl"));
         s.save(&tmp).unwrap();
-        let loaded = State::load(&tmp);
+        let mut loaded = State::load(&tmp);
         std::fs::remove_file(&tmp).ok();
         assert!(loaded.is_baselined());
+        assert!(loaded.is_baseline_frozen("old.jsonl"));
+        loaded.unfreeze_baseline("old.jsonl");
+        assert!(!loaded.is_baseline_frozen("old.jsonl"));
         // Legacy state (predating the field) must load as not-baselined.
         let legacy: State = serde_json::from_str(r#"{"offsets":{}}"#).unwrap();
         assert!(!legacy.is_baselined());
