@@ -66,8 +66,12 @@ Write-Host "Stored CCGUARD_TOKEN (user scope)."
 $User = "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
 
+# NOTE: the token is baked into the task argument directly. Task Scheduler does
+# NOT expand `$env:VAR` in arguments (that's PowerShell syntax), so the prior
+# `$env:CCGUARD_TOKEN` form was passed to the agent as a literal string and failed
+# auth. The CCGUARD_TOKEN user env var is still set above for any manual/CLI use.
 $Action = New-ScheduledTaskAction -Execute $Dest `
-    -Argument "--server $ServerUrl --token `$env:CCGUARD_TOKEN --service --capture-interval $CaptureInterval"
+    -Argument "--server $ServerUrl --token $Token --service --capture-interval $CaptureInterval"
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
 
