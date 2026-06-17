@@ -188,6 +188,7 @@ mod tests {
             device_id: None,
             hostname: None,
             plan: None,
+            tool: None,
             repo,
             title: None,
             cwd: None,

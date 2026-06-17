@@ -1,4 +1,6 @@
 mod chunk;
+mod codex;
+mod copilot;
 mod enforce_paths;
 mod event;
 mod local_judge;
@@ -574,6 +576,71 @@ fn run_dry_run(args: &Args, claude_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
+    // ── Cross-tool dry-run: Codex CLI + Copilot CLI (Phase 1+2) ───────────────
+    let codex_files = paths::codex_home()
+        .map(|h| paths::list_codex_sessions(&h))
+        .unwrap_or_default();
+    let copilot_files = paths::copilot_home()
+        .map(|h| paths::list_copilot_sessions(&h))
+        .unwrap_or_default();
+    for (label, files) in [("codex_cli", &codex_files), ("copilot_cli", &copilot_files)] {
+        if files.is_empty() {
+            continue;
+        }
+        println!("\n  [{label}] {} session file(s) (showing newest 12):", files.len());
+        for file in files.iter().rev().take(12) {
+            let content = match std::fs::read_to_string(file) {
+                Ok(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+            let mut session = if label == "codex_cli" {
+                codex::parse_session(&content)
+            } else {
+                copilot::parse_session(&content)
+            };
+            if session.events.is_empty() {
+                continue;
+            }
+            if let Some(cwd) = session.cwd.as_deref() {
+                if session.repo.org.is_none() {
+                    session.repo = repos.resolve(cwd);
+                }
+            }
+            let (mut p, mut e, mut t, mut tin, mut tout) = (0, 0, 0, 0i64, 0i64);
+            for ev in &session.events {
+                match ev.kind {
+                    EventKind::UserPrompt => p += 1,
+                    EventKind::FileEdit => e += 1,
+                    EventKind::ToolCall => t += 1,
+                    _ => {}
+                }
+                tin += ev.tokens_in;
+                tout += ev.tokens_out;
+            }
+            let repo = &session.repo;
+            let repo_str = match (repo.org.as_deref(), repo.name.as_deref()) {
+                (Some(o), Some(n)) => format!("{o}/{n}"),
+                _ => repo
+                    .path
+                    .as_deref()
+                    .unwrap_or("(no cwd)")
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .unwrap_or("(no cwd)")
+                    .to_string(),
+            };
+            println!(
+                "  • {:<28} {:>3}p {:>3}e {:>3}t  ~{}k tok  {}",
+                truncate(session.title.as_deref().unwrap_or(&session.session_id), 28),
+                p,
+                e,
+                t,
+                (tin + tout) / 1000,
+                repo_str
+            );
+        }
+    }
+
     println!(
         "\n  summary: {total_sessions} session(s), {total_events} event(s){}.",
         if skipped_judge > 0 {
@@ -694,6 +761,105 @@ fn main() -> anyhow::Result<()> {
 /// for session metadata/seqs); the per-file seq watermark — advanced only on
 /// confirmed 202s — prevents redundant re-POSTs and silent loss of an unsent tail.
 #[allow(clippy::too_many_arguments)]
+enum CapOutcome {
+    Captured,
+    Failed,
+    Skipped,
+}
+
+/// Fill identity + repo on a freshly-parsed session and post its new (past the
+/// high-water mark) events. Tool-agnostic: Claude Code, Codex, and Copilot all
+/// flow through here once their parser has produced a `CapturedSession`.
+#[allow(clippy::too_many_arguments)]
+fn capture_one_session(
+    file_key: &str,
+    fallback_id: &str,
+    mut session: ccguard_core::capture::CapturedSession,
+    email: &str,
+    device_id: &str,
+    hostname: &str,
+    plan: &Option<String>,
+    repos: &mut repo::RepoCache,
+    sigs: &mut signals::SignalCache,
+    st: &mut State,
+    poster: &Poster,
+) -> CapOutcome {
+    // Skip the agent's OWN judge transcripts (a local `claude -p` classify call
+    // writes its own transcript; re-ingesting it self-feeds). Tool-agnostic check.
+    if local_judge::is_own_judge_session(&session) {
+        return CapOutcome::Skipped;
+    }
+
+    // The machine is the seat; the email is just the (possibly shared) account.
+    session.user_email = email.to_string();
+    session.device_id = Some(device_id.to_string());
+    session.hostname = Some(hostname.to_string());
+    session.plan = plan.clone();
+    // Resolve repo from cwd only when the parser didn't already set it (Copilot
+    // fills repo from `context.repository` and has no local cwd). Gather provenance
+    // signals whenever we have a cwd.
+    if let Some(cwd) = session.cwd.as_deref() {
+        if session.repo.org.is_none() && session.repo.name.is_none() {
+            session.repo = repos.resolve(cwd);
+        }
+        session.signals = Some(sigs.resolve(cwd));
+    }
+    if session.session_id.is_empty() {
+        session.session_id = fallback_id.to_string();
+    }
+
+    // Only send events past the confirmed-sent high-water mark for this file.
+    let wm = st.capture_watermark(file_key);
+    let new_events: Vec<_> = session
+        .events
+        .iter()
+        .filter(|e| e.seq > wm)
+        .cloned()
+        .collect();
+    if new_events.is_empty() {
+        return CapOutcome::Skipped;
+    }
+    let trimmed = ccguard_core::capture::CapturedSession {
+        events: new_events,
+        ..session.clone()
+    };
+
+    let chunks = chunk::chunk_session(&trimmed, chunk::CHUNK_CONTENT_BUDGET);
+    let mut max_sent = wm;
+    let mut had_error = false;
+    for c in &chunks {
+        let chunk_max = c.events.iter().map(|e| e.seq).max();
+        match poster.post_capture(c) {
+            Ok(202) => {
+                if let Some(m) = chunk_max {
+                    if m > max_sent {
+                        max_sent = m;
+                    }
+                }
+            }
+            Ok(code) => {
+                eprintln!("  POST capture returned HTTP {code} for {file_key} — stopping this file (will retry)");
+                had_error = true;
+                break;
+            }
+            Err(e) => {
+                eprintln!("  POST capture error for {file_key}: {e} — stopping this file (will retry)");
+                had_error = true;
+                break;
+            }
+        }
+    }
+
+    if max_sent > wm {
+        st.set_capture_watermark(file_key, max_sent);
+    }
+    if had_error {
+        CapOutcome::Failed
+    } else {
+        CapOutcome::Captured
+    }
+}
+
 fn run_capture_once(
     claude_dir: &Path,
     email: &str,
@@ -705,110 +871,97 @@ fn run_capture_once(
 ) -> anyhow::Result<()> {
     let mut captured = 0usize; // files that fully sent (all chunks 202)
     let mut failed = 0usize; // files with an unsent tail (will retry next run)
+    let mut by_tool: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
     // Machine identity (the seat = the computer, not the shareable subscription
     // email) + the subscription plan, computed once per pass.
     let device_id = enforce_paths::device_id();
     let hostname = enforce_paths::hostname();
     let plan = read_subscription_plan(claude_dir);
+
+    let mut tally = |outcome: CapOutcome, tool: &'static str| match outcome {
+        CapOutcome::Captured => {
+            captured += 1;
+            *by_tool.entry(tool).or_insert(0) += 1;
+        }
+        CapOutcome::Failed => failed += 1,
+        CapOutcome::Skipped => {}
+    };
+
+    // ── Claude Code: ~/.claude/projects/<enc>/<session>.jsonl ──────────────────
     for file in paths::list_transcripts(claude_dir) {
         let key = file.to_string_lossy().to_string();
         let content = match std::fs::read_to_string(&file) {
-            Ok(c) => c,
-            Err(_) => continue,
+            Ok(c) if !c.is_empty() => c,
+            _ => continue,
         };
-        if content.is_empty() {
-            continue;
-        }
-        let mut session = transcript::parse_session(&content, None);
+        let fallback = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let session = transcript::parse_session(&content, None);
+        let out = capture_one_session(
+            &key, &fallback, session, email, &device_id, &hostname, &plan, repos, sigs, st, poster,
+        );
+        tally(out, "claude_code");
+    }
 
-        // Skip the agent's OWN judge transcripts. Classifying a session runs a local
-        // `claude -p` call, which writes its own transcript into ~/.claude/projects/;
-        // re-ingesting it creates a self-feeding loop of 3-event "Classify the..."
-        // sessions. Drop them here so they never enter the corpus.
-        if local_judge::is_own_judge_session(&session) {
-            continue;
-        }
-
-        // Populate identity + repo. The machine is the seat; the email is just the
-        // (possibly shared) subscription account.
-        session.user_email = email.to_string();
-        session.device_id = Some(device_id.clone());
-        session.hostname = Some(hostname.clone());
-        session.plan = plan.clone();
-        if let Some(cwd) = session.cwd.as_deref() {
-            session.repo = repos.resolve(cwd);
-            // Content-free provenance signals (git + manifest config) for this dir.
-            session.signals = Some(sigs.resolve(cwd));
-        }
-        if session.session_id.is_empty() {
-            // Use file stem as fallback session id
-            session.session_id = file
+    // ── OpenAI Codex CLI: ~/.codex/sessions/**/rollout-*.jsonl ─────────────────
+    if let Some(home) = paths::codex_home() {
+        for file in paths::list_codex_sessions(&home) {
+            let key = file.to_string_lossy().to_string();
+            let content = match std::fs::read_to_string(&file) {
+                Ok(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+            let fallback = file
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
-        }
-
-        // Only send events past the confirmed-sent high-water mark for this file.
-        let wm = st.capture_watermark(&key);
-        let new_events: Vec<_> = session
-            .events
-            .iter()
-            .filter(|e| e.seq > wm)
-            .cloned()
-            .collect();
-        if new_events.is_empty() {
-            continue;
-        }
-        let trimmed = ccguard_core::capture::CapturedSession {
-            events: new_events,
-            ..session.clone()
-        };
-
-        let chunks = chunk::chunk_session(&trimmed, chunk::CHUNK_CONTENT_BUDGET);
-        let mut max_sent = wm;
-        let mut had_error = false;
-        for c in &chunks {
-            let chunk_max = c.events.iter().map(|e| e.seq).max();
-            match poster.post_capture(c) {
-                Ok(202) => {
-                    if let Some(m) = chunk_max {
-                        if m > max_sent {
-                            max_sent = m;
-                        }
-                    }
-                }
-                Ok(code) => {
-                    eprintln!("  POST capture returned HTTP {code} for {key} — stopping this file (will retry)");
-                    had_error = true;
-                    break;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "  POST capture error for {key}: {e} — stopping this file (will retry)"
-                    );
-                    had_error = true;
-                    break;
-                }
-            }
-        }
-
-        // Persist only the confirmed-sent high-water mark — no silent loss.
-        if max_sent > wm {
-            st.set_capture_watermark(&key, max_sent);
-        }
-        if had_error {
-            failed += 1;
-        } else {
-            captured += 1;
+            let session = codex::parse_session(&content);
+            let out = capture_one_session(
+                &key, &fallback, session, email, &device_id, &hostname, &plan, repos, sigs, st,
+                poster,
+            );
+            tally(out, "codex_cli");
         }
     }
+
+    // ── GitHub Copilot CLI: ~/.copilot/session-state/<id>/events.jsonl ─────────
+    if let Some(home) = paths::copilot_home() {
+        for file in paths::list_copilot_sessions(&home) {
+            let key = file.to_string_lossy().to_string();
+            let content = match std::fs::read_to_string(&file) {
+                Ok(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+            // The session id is the parent directory name.
+            let fallback = file
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let session = copilot::parse_session(&content);
+            let out = capture_one_session(
+                &key, &fallback, session, email, &device_id, &hostname, &plan, repos, sigs, st,
+                poster,
+            );
+            tally(out, "copilot_cli");
+        }
+    }
+
     st.save(state_path)?;
+    let breakdown = if by_tool.len() > 1 {
+        format!(" {by_tool:?}")
+    } else {
+        String::new()
+    };
     if failed > 0 {
         println!(
-            "CCGuard agent: captured {captured} session(s), {failed} had send errors (will retry)."
+            "CCGuard agent: captured {captured} session(s){breakdown}, {failed} had send errors (will retry)."
         );
     } else {
-        println!("CCGuard agent: captured {captured} session(s).");
+        println!("CCGuard agent: captured {captured} session(s){breakdown}.");
     }
     Ok(())
 }

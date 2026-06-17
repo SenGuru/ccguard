@@ -48,6 +48,7 @@ fn meta_with(s: &CapturedSession, events: Vec<CapturedEvent>) -> CapturedSession
         device_id: s.device_id.clone(),
         hostname: s.hostname.clone(),
         plan: s.plan.clone(),
+        tool: s.tool.clone(),
         repo: s.repo.clone(),
         title: s.title.clone(),
         cwd: s.cwd.clone(),
@@ -85,6 +86,7 @@ mod tests {
             device_id: None,
             hostname: None,
             plan: None,
+            tool: None,
             repo: Repo {
                 host: Some("github.com".to_string()),
                 org: Some("acme".to_string()),

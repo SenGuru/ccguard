@@ -73,6 +73,10 @@ pub struct CapturedSession {
     /// The subscription plan in use on this machine (e.g. "max", "pro"). Side info.
     #[serde(default)]
     pub plan: Option<String>,
+    /// Which AI coding tool produced this session: "claude_code" (default when
+    /// absent, for older-agent back-compat), "codex_cli", or "copilot_cli".
+    #[serde(default)]
+    pub tool: Option<String>,
     pub repo: Repo,
     #[serde(default)]
     pub title: Option<String>,

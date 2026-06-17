@@ -337,6 +337,7 @@ pub fn parse_session(content: &str, fallback_cwd: Option<&str>) -> CapturedSessi
         device_id: None,
         hostname: None,
         plan: None,
+        tool: Some("claude_code".to_string()),
         repo: Repo {
             host: None,
             org: None,
