@@ -23,3 +23,6 @@ deploy/qa-ccg.json
 
 # Market / GTM / MRR research — keep local only, never publish
 RESEARCH-FINDINGS.md
+
+# Brainstorming visual-companion scratch dir
+.superpowers/
